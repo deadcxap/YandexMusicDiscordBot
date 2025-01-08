@@ -1,0 +1,8 @@
+py-cord
+audioop-lts
+PyNaCl
+pymongo
+yandex-music
+pillow
+python-dotenv
+wavelink
