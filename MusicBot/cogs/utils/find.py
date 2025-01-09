@@ -11,7 +11,7 @@ from discord.ui import View, Button, Item
 from discord import ButtonStyle, Interaction
 
 from MusicBot.cogs.utils.voice import VoiceExtension
-from MusicBot.database.base import add_track, pop_track
+from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
 
 class PlayTrackButton(Button, VoiceExtension):
     
@@ -58,9 +58,9 @@ class PlayAlbumButton(Button, VoiceExtension):
         Button.__init__(self, style=style, label=label, disabled=disabled, custom_id=custom_id, url=url, emoji=emoji, sku_id=sku_id, row=row)
         VoiceExtension.__init__(self)
         self.album = album
-    
+        
     async def callback(self, interaction: Interaction) -> None:
-        if not interaction.user:
+        if not interaction.guild:
             return
         
         album = cast(yandex_music.Album, await self.album.with_tracks_async())
@@ -69,11 +69,11 @@ class PlayAlbumButton(Button, VoiceExtension):
         
         for volume in album.volumes:
             for track in volume:
-                add_track(interaction.user.id, track)
+                self.db.add_track(interaction.guild.id, track)
 
-        track = pop_track(interaction.user.id)
-        ym_track = yandex_music.Track(id=track['track_id'], title=track['title'], client=album.client)  # type: ignore
-        title = await self.play_track(interaction, ym_track)
+        track = self.db.pop_track(interaction.guild.id)
+        ym_track = yandex_music.Track.de_json(track, client=album.client)  # type: ignore
+        title = await self.play_track(interaction, ym_track)  # type: ignore
         if title:
             await interaction.respond(f"Сейчас играет: **{album.title}**!", delete_after=15)
         else:
@@ -81,7 +81,7 @@ class PlayAlbumButton(Button, VoiceExtension):
     
 class ListenTrack(View):
     
-    def __init__(self, track: yandex_music.Track, album_id: int, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = False):
+    def __init__(self, track: yandex_music.Track, album_id: int, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://album/{album_id}/track/{track.id}"
         link_web = f"https://music.yandex.ru/album/{album_id}/track/{track.id}"
@@ -94,7 +94,7 @@ class ListenTrack(View):
     
 class ListenAlbum(View):
     
-    def __init__(self, album: yandex_music.Album, *items: Item, timeout: float | None = 180, disable_on_timeout: bool = False):
+    def __init__(self, album: yandex_music.Album, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://album/{album.id}"
         link_web = f"https://music.yandex.ru/album/{album.id}"
@@ -107,7 +107,7 @@ class ListenAlbum(View):
 
 class ListenArtist(View):
     
-    def __init__(self, artist_id, *items: Item, timeout: float | None = 180, disable_on_timeout: bool = False):
+    def __init__(self, artist_id, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://artist/{artist_id}"
         link_web = f"https://music.yandex.ru/artist/{artist_id}"

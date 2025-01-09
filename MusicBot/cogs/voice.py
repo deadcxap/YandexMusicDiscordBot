@@ -4,8 +4,6 @@ from discord.ext.commands import Cog
 from MusicBot.cogs.utils.voice import VoiceExtension
 from MusicBot.cogs.utils.player import Player
 
-from MusicBot.database.base import update, get_user, get_tracks_list
-
 def setup(bot: discord.Bot):
     bot.add_cog(Voice())
 
@@ -38,10 +36,10 @@ class Voice(Cog, VoiceExtension):
         
         return True
     
-    @toggle.command(name="menu", description="Toggle player menu.")
+    @toggle.command(name="menu", description="Toggle player menu. Available only if you're the only one in the vocie channel.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         if self.voice_check:
-            await ctx.respond("Меню", view=Player(ctx))
+            await ctx.respond("Меню", view=Player(ctx), ephemeral=True)
     
     @voice.command(name="join", description="Join the voice channel you're currently in.")
     async def join(self, ctx: discord.ApplicationContext) -> None:
@@ -58,7 +56,7 @@ class Voice(Cog, VoiceExtension):
     async def leave(self, ctx: discord.ApplicationContext) -> None:
         vc = self.get_voice_client(ctx)
         if await self.voice_check(ctx) and vc is not None:
-            await vc.disconnect()
+            await vc.disconnect(force=True)
             await ctx.respond("Отключение успешно!", delete_after=15, ephemeral=True)
     
     @queue.command(description="Clear tracks queue.")
@@ -69,8 +67,8 @@ class Voice(Cog, VoiceExtension):
     @queue.command(description="Get tracks queue.")
     async def get(self, ctx: discord.ApplicationContext) -> None:
         if await self.voice_check(ctx):
-            user = get_user(ctx.user.id)
-            tracks_list = user.get('tracks_list')
+            guild = self.db.get_guild(ctx.guild.id)
+            tracks_list = guild.get('tracks_list')
             embed = discord.Embed(
                 title='Список треков',
                 color=discord.Color.dark_purple()
@@ -111,13 +109,14 @@ class Voice(Cog, VoiceExtension):
     @track.command(description="Switch to the next song in the queue.")
     async def next(self, ctx: discord.ApplicationContext) -> None:
         if await self.voice_check(ctx):
-            uid = ctx.user.id
-            tracks_list = get_tracks_list(uid)
+            gid = ctx.guild.id
+            tracks_list = self.db.get_tracks_list(gid)
             if not tracks_list:
                 await ctx.respond("Нет песенен в очереди.", delete_after=15, ephemeral=True)
                 return
-            update(uid, {'is_stopped': False})
+            self.db.update(gid, {'is_stopped': False})
             title = await self.next_track(ctx)
             if title is not None:
                 await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
-        
+            else:
+                await ctx.respond(f"Нет треков в очереди.", delete_after=15, ephemeral=True)

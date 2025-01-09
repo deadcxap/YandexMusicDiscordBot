@@ -1,11 +1,13 @@
-from typing import cast
-
 from discord.ui import View, Button, Item
 from discord import ButtonStyle, Interaction, ApplicationContext
 
 from MusicBot.cogs.utils.voice import VoiceExtension
 
 class PlayPauseButton(Button, VoiceExtension):
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self)
+    
     async def callback(self, interaction: Interaction) -> None:
         vc = self.get_voice_client(interaction)
         if vc is not None:
@@ -16,10 +18,23 @@ class PlayPauseButton(Button, VoiceExtension):
                 self.resume_playing(interaction)
                 await interaction.edit(content="Результат возобновления.")
 
-class NextTrackButton(Button, VoiceExtension):
+class NextTrackButton(Button, VoiceExtension):    
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self)
+    
     async def callback(self, interaction: Interaction) -> None:
         await self.next_track(interaction)
         await interaction.edit(content='Результат переключения >.')
+
+class PrevTrackButton(Button, VoiceExtension):    
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self)
+    
+    async def callback(self, interaction: Interaction) -> None:
+        await self.prev_track(interaction)
+        await interaction.edit(content='Результат переключения <.')
 
 class Player(View):
     
@@ -33,7 +48,7 @@ class Player(View):
         self.queue_button = Button(style=ButtonStyle.primary, emoji='📋', row=0)
         self.play_pause_button = PlayPauseButton(style=ButtonStyle.primary, emoji='⏯', row=0)
         self.next_button = NextTrackButton(style=ButtonStyle.primary, emoji='⏭', row=0)
-        self.prev_button = Button(style=ButtonStyle.primary, emoji='⏮', row=0)
+        self.prev_button = PrevTrackButton(style=ButtonStyle.primary, emoji='⏮', row=0)
         
         self.add_item(self.repeat_button)
         self.add_item(self.prev_button)
