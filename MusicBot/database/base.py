@@ -68,7 +68,7 @@ class BaseGuildsDatabase:
         """
         guilds.insert_one(ExplicitGuild(
             _id=gid,
-            tracks_list=[],
+            next_tracks_list=[],
             previous_tracks_list=[],
             current_track=None,
             is_stopped=True,

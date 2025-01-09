@@ -1,7 +1,7 @@
 from typing import TypedDict, Any
 
 class Guild(TypedDict):
-    tracks_list: list[dict[str, Any]]
+    next_tracks_list: list[dict[str, Any]]
     previous_tracks_list: list[dict[str, Any]]
     current_track: dict[str, Any] | None
     is_stopped: bool
@@ -10,7 +10,7 @@ class Guild(TypedDict):
 
 class ExplicitGuild(TypedDict):
     _id: int
-    tracks_list: list[dict[str, Any]]
+    next_tracks_list: list[dict[str, Any]]
     previous_tracks_list: list[dict[str, Any]]
     current_track: dict[str, Any] | None
     is_stopped: bool  # Prevents the `after` callback of play_track
