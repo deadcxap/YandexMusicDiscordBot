@@ -1,10 +1,18 @@
-from typing import TypedDict
+from typing import TypedDict, Any
 
 class Guild(TypedDict):
+    tracks_list: list[dict[str, Any]]
+    previous_tracks_list: list[dict[str, Any]]
+    current_track: dict[str, Any] | None
+    is_stopped: bool
     allow_explicit: bool
     allow_menu: bool
 
 class ExplicitGuild(TypedDict):
-    _id: str
+    _id: int
+    tracks_list: list[dict[str, Any]]
+    previous_tracks_list: list[dict[str, Any]]
+    current_track: dict[str, Any] | None
+    is_stopped: bool  # Prevents the `after` callback of play_track
     allow_explicit: bool
-    allow_menu: bool
+    allow_menu: bool  # Is /toggle mnu command available
