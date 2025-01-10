@@ -1,87 +1,80 @@
 from math import ceil
 from typing import cast
-from io import BytesIO
 
-import aiohttp
 import discord
-import yandex_music
-from PIL import Image
+from yandex_music import Track, Album, Artist, Label
 
 from discord.ui import View, Button, Item
 from discord import ButtonStyle, Interaction
 
-from MusicBot.cogs.utils.voice import VoiceExtension
-from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
+from MusicBot.cogs.utils.voice import VoiceExtension, get_average_color_from_url
 
 class PlayTrackButton(Button, VoiceExtension):
     
-    def __init__(
-        self,
-        track: yandex_music.Track,
-        *,
-        style: ButtonStyle = ButtonStyle.secondary,
-        label: str | None = None,
-        disabled: bool = False,
-        custom_id: str | None = None,
-        url: str | None = None,
-        emoji: str | discord.Emoji | discord.PartialEmoji | None = None,
-        sku_id: int | None = None,
-        row: int | None = None
-        ):
-        Button.__init__(self, style=style, label=label, disabled=disabled, custom_id=custom_id, url=url, emoji=emoji, sku_id=sku_id, row=row)
+    def __init__(self, track: Track, **kwargs):
+        Button.__init__(self, **kwargs)
         VoiceExtension.__init__(self)
         self.track = track
     
     async def callback(self, interaction: Interaction) -> None:
-        if interaction.channel is None or not isinstance(interaction.channel, discord.VoiceChannel):
-            await interaction.respond("Вы должны отправить команду в голосовом канале.", ephemeral=True)
+        if not interaction.guild or not await self.voice_check(interaction):
             return
-        title = await self.play_track(interaction, self.track)
-        if title:
-            await interaction.respond(f"Сейчас играет: **{title}**!", delete_after=15)
+        gid = interaction.guild.id
+        guild = self.db.get_guild(gid)
+        
+        if guild['current_track'] is not None:
+            self.db.modify_track(gid, self.track, 'next', 'append')
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
+            await interaction.respond(f"Трек **{self.track.title}** был добавлен в очередь.", delete_after=15)
+        else:
+            title = await self.play_track(interaction, self.track)
+            if title:
+                if guild['current_player'] is not None and interaction.message:
+                    await interaction.message.delete()
+                await interaction.respond(f"Сейчас играет: **{title}**!", delete_after=15)
 
 class PlayAlbumButton(Button, VoiceExtension):
     
-    def __init__(
-        self,
-        album: yandex_music.Album,
-        *,
-        style: ButtonStyle = ButtonStyle.secondary,
-        label: str | None = None,
-        disabled: bool = False,
-        custom_id: str | None = None,
-        url: str | None = None,
-        emoji: str | discord.Emoji | discord.PartialEmoji | None = None,
-        sku_id: int | None = None,
-        row: int | None = None
-        ):
-        Button.__init__(self, style=style, label=label, disabled=disabled, custom_id=custom_id, url=url, emoji=emoji, sku_id=sku_id, row=row)
+    def __init__(self, album: Album, **kwargs):
+        Button.__init__(self, **kwargs)
         VoiceExtension.__init__(self)
         self.album = album
         
     async def callback(self, interaction: Interaction) -> None:
-        if not interaction.guild:
+        if not interaction.guild or not await self.voice_check(interaction):
             return
+        gid = interaction.guild.id
+        guild = self.db.get_guild(gid)
         
-        album = cast(yandex_music.Album, await self.album.with_tracks_async())
+        album = await self.album.with_tracks_async()
         if not album or not album.volumes:
             return
         
+        tracks: list[Track] = []
         for volume in album.volumes:
-            for track in volume:
-                self.db.add_track(interaction.guild.id, track)
-
-        track = self.db.pop_track(interaction.guild.id)
-        ym_track = yandex_music.Track.de_json(track, client=album.client)  # type: ignore
-        title = await self.play_track(interaction, ym_track)  # type: ignore
-        if title:
-            await interaction.respond(f"Сейчас играет: **{album.title}**!", delete_after=15)
+            tracks.extend(volume)
+        
+        if guild['current_track'] is not None:
+            self.db.modify_track(gid, tracks, 'next', 'extend')
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
+            else:
+                await interaction.respond(f"Альбом **{album.title}** был добавлен в очередь.", delete_after=15)
         else:
-            await interaction.respond("Добавьте бота в голосовой канал при помощи команды /voice join.", delete_after=15, ephemeral=True)
-    
+            track = tracks.pop(0)
+            self.db.modify_track(gid, tracks, 'next', 'extend')
+
+            title = await self.play_track(interaction, track)
+            if title:
+                if guild['current_player'] is not None and interaction.message:
+                    await interaction.message.delete()
+                else:
+                    await interaction.respond(f"Сейчас играет: **{album.title}**!", delete_after=15)
+
 class ListenTrack(View):
     
-    def __init__(self, track: yandex_music.Track, album_id: int, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
+    def __init__(self, track: Track, album_id: int, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://album/{album_id}/track/{track.id}"
         link_web = f"https://music.yandex.ru/album/{album_id}/track/{track.id}"
@@ -94,7 +87,7 @@ class ListenTrack(View):
     
 class ListenAlbum(View):
     
-    def __init__(self, album: yandex_music.Album, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
+    def __init__(self, album: Album, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://album/{album.id}"
         link_web = f"https://music.yandex.ru/album/{album.id}"
@@ -107,7 +100,7 @@ class ListenAlbum(View):
 
 class ListenArtist(View):
     
-    def __init__(self, artist_id, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
+    def __init__(self, artist_id: int, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://artist/{artist_id}"
         link_web = f"https://music.yandex.ru/artist/{artist_id}"
@@ -115,45 +108,9 @@ class ListenArtist(View):
         self.button2 = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
         self.add_item(self.button2)
-    
 
-async def get_average_color_from_url(url: str) -> int:
-    """Get image from url and calculate its average color to use in embeds.
 
-    Args:
-        url (str): Image url.
-
-    Returns:
-        int: RGB Hex code. 0x000 if failed.
-    """
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                response.raise_for_status()
-                response = await response.read()
-
-        img = Image.open(BytesIO(response))
-        img = img.convert('RGB')
-        width, height = img.size
-        r_total, g_total, b_total = 0, 0, 0
-        
-        for y in range(height):
-            for x in range(width):
-                r, g, b = cast(tuple, img.getpixel((x, y)))
-                r_total += r
-                g_total += g
-                b_total += b
-
-        count = width * height
-        r = r_total // count
-        g = g_total // count
-        b = b_total // count
-
-        return (r << 16) + (g << 8) + b
-    except Exception:
-        return 0x000
-
-async def proccess_album(album: yandex_music.Album) -> discord.Embed:
+async def proccess_album(album: Album) -> discord.Embed:
     """Generate album embed.
 
     Args:
@@ -179,8 +136,8 @@ async def proccess_album(album: yandex_music.Album) -> discord.Embed:
     cover_url = album.get_cover_url('400x400')
     color = await get_average_color_from_url(cover_url)
 
-    if isinstance(album.labels[0], yandex_music.Label):
-        labels = [cast(yandex_music.Label, label).name for label in album.labels]
+    if isinstance(album.labels[0], Label):
+        labels = [cast(Label, label).name for label in album.labels]
     else:
         labels = [cast(str, label) for label in album.labels]
 
@@ -232,7 +189,7 @@ async def proccess_album(album: yandex_music.Album) -> discord.Embed:
 
     return embed
 
-async def process_track(track: yandex_music.Track) -> discord.Embed:
+async def process_track(track: Track) -> discord.Embed:
     """Generate track embed.
 
     Args:
@@ -305,7 +262,7 @@ async def process_track(track: yandex_music.Track) -> discord.Embed:
 
     return embed
 
-async def process_artist(artist: yandex_music.Artist) -> discord.Embed:
+async def process_artist(artist: Artist) -> discord.Embed:
     """Generate artist embed.
 
     Args:
