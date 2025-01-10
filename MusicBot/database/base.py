@@ -1,6 +1,6 @@
 """This documents initialises databse and contains methods to access it."""
 
-from typing import Any, cast
+from typing import cast
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -9,8 +9,8 @@ from MusicBot.database.user import User, ExplicitUser
 from MusicBot.database.guild import Guild, ExplicitGuild
 
 client: MongoClient = MongoClient("mongodb://localhost:27017/")
-users: Collection[User] = client.YandexMusicBot.users
-guilds: Collection[Guild] = client.YandexMusicBot.guilds
+users: Collection[ExplicitUser] = client.YandexMusicBot.users
+guilds: Collection[ExplicitGuild] = client.YandexMusicBot.guilds
 
 class BaseUsersDatabase:
 
@@ -36,7 +36,7 @@ class BaseUsersDatabase:
         self.get_user(uid)
         users.update_one({'_id': uid}, {"$set": data})
 
-    def get_user(self, uid: int) -> User:
+    def get_user(self, uid: int) -> ExplicitUser:
         """Get user record from database. Create new entry if not present.
 
         Args:
@@ -49,14 +49,14 @@ class BaseUsersDatabase:
         if not user:
             self.create_record(uid)
             user = users.find_one({'_id': uid})
-        return cast(User, user)
+        return cast(ExplicitUser, user)
 
     def get_ym_token(self, uid: int) -> str | None:
         user = users.find_one({'_id': uid})
         if not user:
             self.create_record(uid)
-            user = cast(User, users.find_one({'_id': uid}))
-        return user['ym_token']
+            user = users.find_one({'_id': uid})
+        return cast(ExplicitUser, user)['ym_token']
 
 class BaseGuildsDatabase:
     
@@ -68,15 +68,16 @@ class BaseGuildsDatabase:
         """
         guilds.insert_one(ExplicitGuild(
             _id=gid,
-            next_tracks_list=[],
-            previous_tracks_list=[],
+            next_tracks=[],
+            previous_tracks=[],
             current_track=None,
+            current_player=None,
             is_stopped=True,
             allow_explicit=True,
             allow_menu=True
         ))
 
-    def update(self, gid: int, data: dict[Any, Any]) -> None:
+    def update(self, gid: int, data: Guild) -> None:
         """Update guild record.
 
         Args:
@@ -86,7 +87,7 @@ class BaseGuildsDatabase:
         self.get_guild(gid)
         guilds.update_one({'_id': gid}, {"$set": data})
 
-    def get_guild(self, gid: int) -> Guild:
+    def get_guild(self, gid: int) -> ExplicitGuild:
         """Get guild record from database. Create new entry if not present.
 
         Args:
@@ -99,4 +100,4 @@ class BaseGuildsDatabase:
         if not guild:
             self.create_record(gid)
             guild = guilds.find_one({'_id': gid})
-        return cast(Guild, guild)
+        return cast(ExplicitGuild, guild)

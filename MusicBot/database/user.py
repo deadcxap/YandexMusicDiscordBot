@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-class User(TypedDict):
+class User(TypedDict, total=False):
     ym_token: str | None
 
 class ExplicitUser(TypedDict):
