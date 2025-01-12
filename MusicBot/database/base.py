@@ -74,7 +74,9 @@ class BaseGuildsDatabase:
             current_player=None,
             is_stopped=True,
             allow_explicit=True,
-            allow_menu=True
+            allow_menu=True,
+            shuffle=False,
+            repeat=False
         ))
 
     def update(self, gid: int, data: Guild) -> None:

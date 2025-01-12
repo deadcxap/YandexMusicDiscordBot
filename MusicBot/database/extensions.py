@@ -1,4 +1,5 @@
-from typing import Any, Literal, cast
+from random import randint
+from typing import Any, Literal
 from yandex_music import Track
 
 from MusicBot.database import BaseGuildsDatabase
@@ -47,14 +48,17 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         elif type == 'next':
             tracks = guild['next_tracks']
             if not tracks:
-                return
+                return None
             track = tracks.pop(0)
             self.update(gid, {'next_tracks': tracks})
         elif type == 'previous':
             tracks = guild['previous_tracks']
             if not tracks:
-                return
+                return None
             track = tracks.pop(0)
+            current_track = guild['current_track']
+            if current_track:
+                self.modify_track(gid, current_track, 'next', 'insert')
             self.update(gid, {'previous_tracks': tracks})
         
         return track
@@ -63,7 +67,7 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         self, gid: int,
         track: Track | dict[str, Any] | list[dict[str, Any]] | list[Track],
         type: Literal['next', 'previous'],
-        operation: Literal['insert', 'append', 'extend', 'pop_start', 'pop_end']
+        operation: Literal['insert', 'append', 'extend', 'pop_start', 'pop_end', 'pop_random']
     ) -> dict[str, Any] | None:
         """Perform operation of given type on tracks list of given type.
 
@@ -77,9 +81,15 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
             dict[str, Any] | None: Dictionary convertable to yandex_music.Track or None.
         """
         guild = self.get_guild(gid)
-        explicit_type: Literal['next_tracks', 'previous_tracks'] = type + '_tracks'
+        
+        if type not in ('next_tracks', 'previous_tracks'):
+            raise ValueError(f"Type must be either 'next' or 'previous', not '{type}'")
+        explicit_type: Literal['next_tracks', 'previous_tracks'] = type + '_tracks'  # type: ignore[assignment]
         tracks = guild[explicit_type]
         pop_track = None
+        
+        if not tracks:
+            return None
         
         if isinstance(track, list):
             tracks_list = []
@@ -106,15 +116,34 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
             elif operation == 'pop_start':
                 pop_track = tracks.pop(0)
             elif operation == 'pop_end':
-                pop_track = tracks.pop(0)
+                pop_track = tracks.pop(-1)
+            elif operation == 'pop_random':
+                pop_track = tracks.pop(randint(0, len(tracks)))
             elif operation == 'extend':
                 raise ValueError('Can only use extend operation on lists.')
+            else:
+                raise ValueError(f"Unknown operation '{operation}'")
 
             self.update(gid, {explicit_type: tracks}) # type: ignore
         
-        if pop_track:
-            return pop_track
+        return pop_track
 
+    def get_random_track(self, gid: int) -> dict[str, Any] | None:
+        """Pop random track from the queue.
+
+        Args:
+            gid (int): Guild id.
+
+        Returns:
+            dict[str, Any] | None: Dictionary covertable to yandex_musci.Track or None
+        """
+        tracks = self.get_tracks_list(gid, 'next')
+        if not tracks:
+            return None
+        track = tracks.pop()
+        self.update(gid, {'next_tracks': tracks})
+        return track
+    
     def set_current_track(self, gid: int, track: Track | dict[str, Any]) -> None:
         if isinstance(track, Track):
             track = track.to_dict()

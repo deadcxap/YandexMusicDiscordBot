@@ -9,8 +9,8 @@ from yandex_music import ClientAsync as YMClient
 
 from MusicBot.database import BaseUsersDatabase
 from MusicBot.cogs.utils.find import (
-    proccess_album, process_track, process_artist,
-    ListenAlbum, ListenTrack, ListenArtist
+    process_album, process_track, process_artist, process_playlist,
+    ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist
 )
 
 def setup(bot):
@@ -22,7 +22,7 @@ class General(Cog):
         self.bot = bot
         self.db = BaseUsersDatabase()
     
-    @discord.slash_command(description="Login to Yandex Music using access token.", guild_ids=[1247100229535141899])
+    @discord.slash_command(description="Войти в Yandex Music с помощью токена.")
     @discord.option("token", type=discord.SlashCommandOptionType.string)
     async def login(self, ctx: discord.ApplicationContext, token: str) -> None:
         try:
@@ -36,45 +36,55 @@ class General(Cog):
         self.db.update(uid, {'ym_token': token})
         await ctx.respond(f'Привет, {about['account']['first_name']}!', delete_after=15, ephemeral=True)
 
-    @discord.slash_command(description="Find the content type by its name and send info about it. The best match is returned.", guild_ids=[1247100229535141899])
+    @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
         "name",
-        description="Name of the content to find",
+        description="Название контента для поиска",
         type=discord.SlashCommandOptionType.string
     )
     @discord.option(
         "content_type",
-        description="Type of the conent to find (artist, album, track, playlist).",
+        description="Тип искомого контента (artist, album, track, playlist).",
         type=discord.SlashCommandOptionType.string,
         default='track'
     )
     async def find(self, ctx: discord.ApplicationContext, name: str, content_type: str = 'track') -> None:
         if content_type not in ('artist', 'album', 'track', 'playlist'):
-            await ctx.respond('❌ Недопустимый тип.')
+            await ctx.respond("❌ Недопустимый тип.", delete_after=15, ephemeral=True)
             return
         
         token = self.db.get_ym_token(ctx.user.id)
         if not token:
-            await ctx.respond('❌ Необходимо указать свой токен доступа с помощью комманды /login.', delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью комманды /login.", delete_after=15, ephemeral=True)
             return
         try:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
-            await ctx.respond('❌ Недействительный токен. Если это не так, попробуйте ещё раз.', delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
             return
         
         result = await client.search(name, True, content_type)
+        
+        if not result:
+            await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже", delete_after=15, ephemeral=True)
+            return
 
-        if content_type == 'album':
-            album = result.albums.results[0]  # type: ignore
-            embed = await proccess_album(album)
-            await ctx.respond("", embed=embed, view=ListenAlbum(album), delete_after=360)
-        elif content_type == 'track':
-            track: yandex_music.Track = result.tracks.results[0]  # type: ignore
+        if content_type == 'album' and result.albums:
+            album = result.albums.results[0]
+            embed = await process_album(album)
+            await ctx.respond(embed=embed, view=ListenAlbum(album))
+        elif content_type == 'track' and result.tracks:
+            track: yandex_music.Track = result.tracks.results[0]
             album_id = cast(int, track.albums[0].id)
             embed = await process_track(track)
-            await ctx.respond("", embed=embed, view=ListenTrack(track, album_id), delete_after=360)
-        elif content_type == 'artist':
-            artist = result.artists.results[0]  # type: ignore
+            await ctx.respond(embed=embed, view=ListenTrack(track, album_id))
+        elif content_type == 'artist' and result.artists:
+            artist = result.artists.results[0]
             embed = await process_artist(artist)
-            await ctx.respond("", embed=embed, view=ListenArtist(artist.id), delete_after=360)
+            await ctx.respond(embed=embed, view=ListenArtist(artist))
+        elif content_type == 'playlist' and result.playlists:
+            playlist = result.playlists.results[0]
+            embed = await process_playlist(playlist)
+            await ctx.respond(embed=embed, view=ListenPlaylist(playlist))
+        else:
+            await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)

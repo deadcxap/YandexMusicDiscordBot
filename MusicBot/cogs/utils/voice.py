@@ -1,5 +1,6 @@
 import aiohttp
 import asyncio
+from os import getenv
 from math import ceil
 from typing import cast
 from io import BytesIO
@@ -39,7 +40,10 @@ async def generate_player_embed(track: Track) -> discord.Embed:
     color = await get_average_color_from_url(cover_url)
 
     if explicit:
-        title += ' <:explicit:1325879701117472869>'
+        explicit_eid = getenv('EXPLICIT_EID')
+        if not explicit_eid:
+            raise ValueError('You must specify explicit emoji id in your enviroment.')
+        title += ' <:explicit:' + explicit_eid + '>'
 
     duration_m = duration // 60000
     duration_s = ceil(duration / 1000) - duration_m * 60
@@ -99,10 +103,10 @@ async def get_average_color_from_url(url: str) -> int:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 response.raise_for_status()
-                response = await response.read()
+                result = await response.read()
 
-        img = Image.open(BytesIO(response))
-        img = img.convert('RGB')
+        img_file = Image.open(BytesIO(result))
+        img = img_file.convert('RGB')
         width, height = img.size
         r_total, g_total, b_total = 0, 0, 0
         
@@ -157,7 +161,7 @@ class VoiceExtension:
                 # If interaction from player buttons
                 await ctx.edit(embed=embed)
             else:
-                # If interaction from other buttons. They should have thair own response.
+                # If interaction from other buttons. They should have their own response.
                 await player.edit(embed=embed)
     
     async def voice_check(self, ctx: ApplicationContext | Interaction) -> bool:
@@ -174,7 +178,7 @@ class VoiceExtension:
         
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
-            await ctx.respond('❌ Необходимо указать свой токен доступа с помощью комманды /login.', delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью комманды /login.", delete_after=15, ephemeral=True)
             return False
         
         channel = ctx.channel
@@ -200,7 +204,7 @@ class VoiceExtension:
             ctx (ApplicationContext | Interaction): Command context.
 
         Returns:
-            discord.VoiceClient | None: Voice client.
+            discord.VoiceClient | None: Voice client or None.
         """
         
         if isinstance(ctx, Interaction):
@@ -211,8 +215,8 @@ class VoiceExtension:
         return cast(discord.VoiceClient, voice_chat)
     
     async def play_track(self, ctx: ApplicationContext | Interaction, track: Track) -> str | None:
-        """Download ``track`` by its id and play it in the voice channel. Return track title on success and don't respond.
-        If sound is already playing, add track id to the queue and respond.
+        """Download ``track`` by its id and play it in the voice channel. Return track title on success.
+        If sound is already playing, add track id to the queue. There's no response to the context.
 
         Args:
             ctx (ApplicationContext | Interaction): Context
@@ -222,11 +226,11 @@ class VoiceExtension:
             str | None: Song title or None.
         """
         if not ctx.guild:
-            return
+            return None
 
         vc = self.get_voice_client(ctx)
         if not vc:
-            return
+            return None
         
         if isinstance(ctx, Interaction):
             loop = ctx.client.loop
@@ -253,11 +257,13 @@ class VoiceExtension:
         vc = self.get_voice_client(ctx)
         if vc:
             vc.pause()
+        return
 
     def resume_playing(self, ctx: ApplicationContext | Interaction) -> None:
         vc = self.get_voice_client(ctx)
         if vc:
             vc.resume()
+        return
 
     def stop_playing(self, ctx: ApplicationContext | Interaction) -> None:
         if not ctx.guild:
@@ -267,10 +273,11 @@ class VoiceExtension:
         if vc:
             self.db.update(ctx.guild.id, {'current_track': None, 'is_stopped': True})
             vc.stop()
+        return
             
     async def next_track(self, ctx: ApplicationContext | Interaction) -> str | None:
         """Switch to the next track in the queue. Return track title on success.
-        Stop playing if tracks list is empty.
+        Doesn't change track if stopped. Stop playing if tracks list is empty.
 
         Args:
             ctx (ApplicationContext | Interaction): Context
@@ -279,31 +286,36 @@ class VoiceExtension:
             str | None: Track title or None.
         """
         if not ctx.guild or not ctx.user:
-            return
+            return None
         
         gid = ctx.guild.id
         guild = self.db.get_guild(gid)
         token = self.users_db.get_ym_token(ctx.user.id)
-        if guild.get('is_stopped'):
-            return
+        if guild['is_stopped']:
+            return None
     
         if not self.get_voice_client(ctx):  # Silently return if bot got kicked
-            return
+            return None
         
         current_track = guild['current_track']
-        next_track = self.db.get_track(gid, 'next')
-        if next_track and current_track:
+        ym_track = None
+        
+        if guild['repeat'] and current_track:
+            return await self.repeat_current_track(ctx)
+        elif guild['shuffle']:
+            next_track = self.db.get_random_track(gid)
+        else:
+            next_track = self.db.get_track(gid, 'next')
+        
+        if current_track:
             self.db.modify_track(gid, current_track, 'previous', 'insert')
+            
+        if next_track:
             ym_track = Track.de_json(next_track, client=ClientAsync(token))  # type: ignore
             self.stop_playing(ctx)
             return await self.play_track(ctx, ym_track)  # type: ignore
-        elif next_track:
-            ym_track = Track.de_json(next_track, client=ClientAsync(token))  # type: ignore
-            self.stop_playing(ctx)
-            return await self.play_track(ctx, ym_track)  # type: ignore
-        elif current_track:
-            self.db.modify_track(gid, current_track, 'previous', 'insert')
-            self.stop_playing(ctx)
+        
+        return None
 
     async def prev_track(self, ctx: ApplicationContext | Interaction) -> str | None:
         """Switch to the previous track in the queue. Repeat curren the song if no previous tracks.
@@ -317,21 +329,22 @@ class VoiceExtension:
         """
 
         if not ctx.guild or not ctx.user:
-            return
+            return None
         
         gid = ctx.guild.id
         token = self.users_db.get_ym_token(ctx.user.id)
         current_track = self.db.get_track(gid, 'current')
-        
         prev_track = self.db.get_track(gid, 'previous')
+        
+        title = None
         if prev_track:
-            if current_track:
-                self.db.modify_track(gid, current_track, 'next', 'insert')
             ym_track = Track.de_json(prev_track, client=ClientAsync(token))  # type: ignore
             self.stop_playing(ctx)
-            return await self.play_track(ctx, ym_track)  # type: ignore
+            title = await self.play_track(ctx, ym_track)  # type: ignore
         elif current_track:
-            return await self.repeat_current_track(ctx)
+            title = await self.repeat_current_track(ctx)
+        
+        return title
     
     async def repeat_current_track(self, ctx: ApplicationContext | Interaction) -> str | None:
         """Repeat current track. Return track title on success.
@@ -344,7 +357,7 @@ class VoiceExtension:
         """
         
         if not ctx.guild or not ctx.user:
-            return
+            return None
         
         gid = ctx.guild.id
         token = self.users_db.get_ym_token(ctx.user.id)
@@ -354,3 +367,5 @@ class VoiceExtension:
             ym_track = Track.de_json(current_track, client=ClientAsync(token))  # type: ignore
             self.stop_playing(ctx)
             return await self.play_track(ctx, ym_track)  # type: ignore
+
+        return None

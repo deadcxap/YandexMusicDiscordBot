@@ -14,72 +14,79 @@ def setup(bot: discord.Bot):
 
 class Voice(Cog, VoiceExtension):
     
-    voice = discord.SlashCommandGroup("voice", "Команды, связанные с голосовым каналом.", [1247100229535141899])
-    queue = discord.SlashCommandGroup("queue", "Команды, связанные с очередью треков.", [1247100229535141899])
-    track = discord.SlashCommandGroup("track", "Команды, связанные с текущим треком.", [1247100229535141899])
+    voice = discord.SlashCommandGroup("voice", "Команды, связанные с голосовым каналом.")
+    queue = discord.SlashCommandGroup("queue", "Команды, связанные с очередью треков.")
+    track = discord.SlashCommandGroup("track", "Команды, связанные с текущим треком.")
     
-    @voice.command(name="menu", description="Toggle player menu. Available only if you're the only one in the vocie channel.")
+    @voice.command(name="menu", description="Переключить меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         if not await self.voice_check(ctx):
             return
-        current_track = self.db.get_track(ctx.guild.id, 'current')
-        try:
-            embed = await process_track(Track.de_json(current_track, client=ClientAsync()))  # type: ignore
+
+        guild = self.db.get_guild(ctx.guild.id)
+        embed = None
+
+        if guild['current_track']:
+            embed = await process_track(Track.de_json(guild['current_track'], client=ClientAsync()))  # type: ignore
             vc = self.get_voice_client(ctx)
-            if not vc:
-                return
-            if not vc.is_paused():
+            if vc and vc.is_paused():
                 embed.set_footer(text='Приостановлено')
             else:
                 embed.remove_footer()
-        except AttributeError:
-            embed = None
+
+        if guild['current_player']:
+            message = await ctx.fetch_message(guild['current_player'])
+            await message.delete()
+
         interaction = cast(discord.Interaction, await ctx.respond(view=Player(ctx), embed=embed, delete_after=3600))
         response = await interaction.original_response()
         self.db.update(ctx.guild.id, {'current_player': response.id})
     
-    @voice.command(name="join", description="Join the voice channel you're currently in.")
+    @voice.command(name="join", description="Подключиться к голосовому каналу, в котором вы сейчас находитесь.")
     async def join(self, ctx: discord.ApplicationContext) -> None:
         vc = self.get_voice_client(ctx)
-        if vc is not None and vc.is_playing():
-            await ctx.respond("❌ Бот уже находится в голосовом канале. Выключите его с помощью команды /voice leave.", delete_after=15, ephemeral=True)
-        elif ctx.channel is not None and isinstance(ctx.channel, discord.VoiceChannel):
+        if vc and vc.is_playing():
+            response_message = "❌ Бот уже находится в голосовом канале. Выключите его с помощью команды /voice leave."
+        elif isinstance(ctx.channel, discord.VoiceChannel):
             await ctx.channel.connect(timeout=15)
-            await ctx.respond("Подключение успешно!", delete_after=15, ephemeral=True)
+            response_message = "Подключение успешно!"
         else:
-            await ctx.respond("❌ Вы должны отправить команду в голосовом канале.", delete_after=15, ephemeral=True)
+            response_message = "❌ Вы должны отправить команду в голосовом канале."
+        
+        await ctx.respond(response_message, delete_after=15, ephemeral=True)
     
-    @voice.command(description="Force the bot to leave the voice channel.")
+    @voice.command(description="Заставить бота покинуть голосовой канал.")
     async def leave(self, ctx: discord.ApplicationContext) -> None:
         vc = self.get_voice_client(ctx)
-        if await self.voice_check(ctx) and vc is not None:
+        if vc and await self.voice_check(ctx):
             self.stop_playing(ctx)
             self.db.clear_history(ctx.guild.id)
             await vc.disconnect(force=True)
             await ctx.respond("Отключение успешно!", delete_after=15, ephemeral=True)
     
-    @queue.command(description="Clear tracks queue and history.")
+    @queue.command(description="Очистить очередь и историю треков.")
     async def clear(self, ctx: discord.ApplicationContext) -> None:
         if not await self.voice_check(ctx):
             return
         self.db.clear_history(ctx.guild.id)
         await ctx.respond("Очередь и история сброшены.", delete_after=15, ephemeral=True)
     
-    @queue.command(description="Get tracks queue.")
+    @queue.command(description="Получить очередь треков.")
     async def get(self, ctx: discord.ApplicationContext) -> None:
-        if await self.voice_check(ctx):
-            tracks_list = self.db.get_tracks_list(ctx.guild.id, 'next')
-            embed = discord.Embed(
-                title='Список треков',
-                color=discord.Color.dark_purple()
-            )
-            for i, track in enumerate(tracks_list, start=1):
-                embed.add_field(name=f"{i} - {track.get('title')}", value="", inline=False)
-                if i == 25:
-                    break
-            await ctx.respond("", embed=embed, ephemeral=True)
+        if not await self.voice_check(ctx):
+            return
+        tracks_list = self.db.get_tracks_list(ctx.guild.id, 'next')
+        embed = discord.Embed(
+            title='Список треков',
+            color=discord.Color.dark_purple()
+        )
+        for i, track in enumerate(tracks_list, start=1):
+            embed.add_field(name=f"{i} - {track.get('title')}", value="", inline=False)
+            if i == 25:
+                break
+        await ctx.respond("", embed=embed, ephemeral=True)
     
-    @track.command(description="Pause the current track.")
+    @track.command(description="Приостановить текущий трек.")
     async def pause(self, ctx: discord.ApplicationContext) -> None:
         vc = self.get_voice_client(ctx)
         if await self.voice_check(ctx) and vc is not None:
@@ -89,7 +96,7 @@ class Voice(Cog, VoiceExtension):
             else:
                 await ctx.respond("Воспроизведение уже приостановлено.", delete_after=15, ephemeral=True)
     
-    @track.command(description="Resume the current track.")
+    @track.command(description="Возобновить текущий трек.")
     async def resume(self, ctx: discord.ApplicationContext) -> None:
         vc = self.get_voice_client(ctx)
         if await self.voice_check(ctx) and vc is not None:
@@ -99,14 +106,19 @@ class Voice(Cog, VoiceExtension):
             else:
                 await ctx.respond("Воспроизведение не на паузе.", delete_after=15, ephemeral=True)
     
-    @track.command(description="Stop the current track and clear the queue and history.")
+    @track.command(description="Остановить текущий трек и очистите очередь и историю.")
     async def stop(self, ctx: discord.ApplicationContext) -> None:
         if await self.voice_check(ctx):
             self.db.clear_history(ctx.guild.id)
             self.stop_playing(ctx)
+            current_player = self.db.get_guild(ctx.guild.id)['current_player']
+            if current_player is not None:
+                message = await ctx.fetch_message(current_player)
+                await message.delete()
+                self.db.update(ctx.guild.id, {'current_player': None, 'repeat': False, 'shuffle': False})
             await ctx.respond("Воспроизведение остановлено.", delete_after=15, ephemeral=True)
     
-    @track.command(description="Switch to the next song in the queue.")
+    @track.command(description="Переключиться на следующую песню в очереди.")
     async def next(self, ctx: discord.ApplicationContext) -> None:
         if await self.voice_check(ctx):
             gid = ctx.guild.id
