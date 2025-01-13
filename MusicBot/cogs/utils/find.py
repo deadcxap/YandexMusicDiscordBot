@@ -36,7 +36,6 @@ class PlayTrackButton(Button, VoiceExtension):
 
         await interaction.respond(response_message, delete_after=15)
 
-
 class PlayAlbumButton(Button, VoiceExtension):
     
     def __init__(self, album: Album, **kwargs):
@@ -70,7 +69,6 @@ class PlayAlbumButton(Button, VoiceExtension):
             await interaction.message.delete()
         else:
             await interaction.respond(response_message, delete_after=15)
-
 
 class PlayArtistButton(Button, VoiceExtension):
     def __init__(self, artist: Artist, **kwargs):

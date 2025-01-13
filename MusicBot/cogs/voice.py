@@ -5,8 +5,7 @@ from discord.ext.commands import Cog
 
 from yandex_music import Track, ClientAsync
 
-from MusicBot.cogs.utils.find import process_track
-from MusicBot.cogs.utils.voice import VoiceExtension
+from MusicBot.cogs.utils.voice import VoiceExtension, generate_player_embed
 from MusicBot.cogs.utils.player import Player
 
 def setup(bot: discord.Bot):
@@ -18,7 +17,7 @@ class Voice(Cog, VoiceExtension):
     queue = discord.SlashCommandGroup("queue", "Команды, связанные с очередью треков.")
     track = discord.SlashCommandGroup("track", "Команды, связанные с текущим треком.")
     
-    @voice.command(name="menu", description="Переключить меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
+    @voice.command(name="menu", description="Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         if not await self.voice_check(ctx):
             return
@@ -27,7 +26,7 @@ class Voice(Cog, VoiceExtension):
         embed = None
 
         if guild['current_track']:
-            embed = await process_track(Track.de_json(guild['current_track'], client=ClientAsync()))  # type: ignore
+            embed = await generate_player_embed(Track.de_json(guild['current_track'], client=ClientAsync()))  # type: ignore
             vc = self.get_voice_client(ctx)
             if vc and vc.is_paused():
                 embed.set_footer(text='Приостановлено')
@@ -64,7 +63,7 @@ class Voice(Cog, VoiceExtension):
             await vc.disconnect(force=True)
             await ctx.respond("Отключение успешно!", delete_after=15, ephemeral=True)
     
-    @queue.command(description="Очистить очередь и историю треков.")
+    @queue.command(description="Очистить очередь треков и историю прослушивания.")
     async def clear(self, ctx: discord.ApplicationContext) -> None:
         if not await self.voice_check(ctx):
             return
@@ -106,16 +105,16 @@ class Voice(Cog, VoiceExtension):
             else:
                 await ctx.respond("Воспроизведение не на паузе.", delete_after=15, ephemeral=True)
     
-    @track.command(description="Остановить текущий трек и очистите очередь и историю.")
+    @track.command(description="Прервать проигрывание, удалить историю, очередь и текущий плеер.")
     async def stop(self, ctx: discord.ApplicationContext) -> None:
         if await self.voice_check(ctx):
             self.db.clear_history(ctx.guild.id)
             self.stop_playing(ctx)
             current_player = self.db.get_guild(ctx.guild.id)['current_player']
             if current_player is not None:
+                self.db.update(ctx.guild.id, {'current_player': None, 'repeat': False, 'shuffle': False})
                 message = await ctx.fetch_message(current_player)
                 await message.delete()
-                self.db.update(ctx.guild.id, {'current_player': None, 'repeat': False, 'shuffle': False})
             await ctx.respond("Воспроизведение остановлено.", delete_after=15, ephemeral=True)
     
     @track.command(description="Переключиться на следующую песню в очереди.")

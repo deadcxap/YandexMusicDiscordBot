@@ -1,4 +1,4 @@
-from typing import cast
+from typing import cast, TypeAlias
 
 import discord
 from discord.ext.commands import Cog
@@ -22,8 +22,76 @@ class General(Cog):
         self.bot = bot
         self.db = BaseUsersDatabase()
     
-    @discord.slash_command(description="Войти в Yandex Music с помощью токена.")
-    @discord.option("token", type=discord.SlashCommandOptionType.string)
+    account = discord.SlashCommandGroup("account", "Команды, связанные с аккаунтом.")
+    
+    @discord.slash_command(description="Получить информацию о командах YandexMusic.")
+    @discord.option(
+        "command",
+        description="Название команды.",
+        type=discord.SlashCommandOptionType.string,
+        default='all'
+    )
+    async def help(self, ctx: discord.ApplicationContext, command: str) -> None:
+        response_message = None
+        embed = discord.Embed(
+            color=0xfed42b
+        )
+        embed.description = '__Использование__\n'
+        embed.set_author(name='Помощь')
+
+        if command == 'all':
+            embed.description = ("Данный бот позволяет вам слушать музыку из вашего аккаунта Yandex Music.\n"
+                                "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
+                                "Для получения помощи для конкретной команды, введите /help <команда>.\n\n"
+                                "**Для доп. помощи, зайдите на [сервер любителей Яндекс Музыки](https://discord.gg/gkmFDaPMeC).**")
+            embed.title = 'Помощь'
+
+            embed.add_field(
+                name='__Основные команды__',
+                value="""
+                `find`
+                `help`
+                `account`
+                `queue`
+                `track`
+                `voice`
+                """
+            )
+
+            embed.set_author(name='YandexMusic')
+            embed.set_footer(text='©️ Bananchiki')
+        elif command == 'find':
+            embed.description += ("Вывести информацию о треке (по умолчанию), альбоме, авторе или плейлисте. Позволяет добавить музыку в очередь. "
+                                "В названии можно уточнить автора или версию. Возвращается лучшее совпадение.\n```/find <название> <тип>```")
+        elif command == 'help':
+            embed.description += ("Вывести список всех команд.\n```/help```\n"
+                                "Получить информацию о конкретной команде.\n```/help <команда>```")
+        elif command == 'account':
+            embed.description += ("Ввести токен от Яндекс Музыки. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
+                                "```/account login <token>```\n"
+                                "Удалить токен из датабазы бота.\n```/account remove```")
+        elif command == 'queue':
+            embed.description += ("Получить очередь треков. По 25 элементов на страницу.\n```/queue get```\n"
+                                "Очистить очередь треков и историю прослушивания. Требует согласия части слушателей.\n```/queue clear```\n"
+                                "`Примечание`: Если вы один в голосовом канале или имеете роль администратора бота, голосование не требуется.")
+        elif command == 'track':
+            embed.description += ("`Примечание`: Следующие команды требуют согласия части слушателей. Если вы один в голосовом канале или имеете роль администратора бота, голосование не требуется.\n\n"
+                                "Переключиться на следующий трек в очереди и добавить его в историю.\n```/track next```\n"
+                                "Приостановить текущий трек.\n ```/track pause```\n"
+                                "Возобновить текущий трек.\n ```/track resume```\n"
+                                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```")
+        elif command == 'voice':
+            embed.description += ("Присоединить бота в голосовой канал. Требует роли администратора.\n ```/voice join```\n"
+                                "Заставить бота покинуть голосовой канал. Требует роли администратора.\n ```/voice leave```\n"
+                                "Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.\n```/voice menu```")
+        else:
+            response_message = '❌ Неизвестная команда.'
+            embed = None
+
+        await ctx.respond(response_message, embed=embed, ephemeral=True)
+    
+    @account.command(description="Ввести токен от Яндекс Музыки.")
+    @discord.option("token", type=discord.SlashCommandOptionType.string, description="Токен.")
     async def login(self, ctx: discord.ApplicationContext, token: str) -> None:
         try:
             client = await YMClient(token).init()
@@ -35,23 +103,35 @@ class General(Cog):
 
         self.db.update(uid, {'ym_token': token})
         await ctx.respond(f'Привет, {about['account']['first_name']}!', delete_after=15, ephemeral=True)
+    
+    @account.command(description="Удалить токен из датабазы бота.")
+    async def remove(self, ctx: discord.ApplicationContext) -> None:
+        self.db.update(ctx.user.id, {'ym_token': None})
+        await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
         "name",
-        description="Название контента для поиска",
+        description="Название контента для поиска (По умолчанию трек).",
         type=discord.SlashCommandOptionType.string
     )
     @discord.option(
         "content_type",
-        description="Тип искомого контента (artist, album, track, playlist).",
+        description="Тип искомого контента (track, album, artist, playlist).",
         type=discord.SlashCommandOptionType.string,
-        default='track'
+        choices=['Artist', 'Album', 'Track', 'Playlist'],
+        default='Track'
     )
-    async def find(self, ctx: discord.ApplicationContext, name: str, content_type: str = 'track') -> None:
-        if content_type not in ('artist', 'album', 'track', 'playlist'):
+    async def find(
+        self,
+        ctx: discord.ApplicationContext,
+        name: str,
+        content_type: str = 'Track'
+    ) -> None:
+        if content_type not in ['Artist', 'Album', 'Track', 'Playlist']:
             await ctx.respond("❌ Недопустимый тип.", delete_after=15, ephemeral=True)
             return
+        content_type = content_type.lower()
         
         token = self.db.get_ym_token(ctx.user.id)
         if not token:
