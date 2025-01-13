@@ -82,14 +82,11 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         """
         guild = self.get_guild(gid)
         
-        if type not in ('next_tracks', 'previous_tracks'):
+        if type not in ('next', 'previous'):
             raise ValueError(f"Type must be either 'next' or 'previous', not '{type}'")
         explicit_type: Literal['next_tracks', 'previous_tracks'] = type + '_tracks'  # type: ignore[assignment]
         tracks = guild[explicit_type]
         pop_track = None
-        
-        if not tracks:
-            return None
         
         if isinstance(track, list):
             tracks_list = []
