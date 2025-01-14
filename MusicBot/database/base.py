@@ -23,7 +23,10 @@ class BaseUsersDatabase:
         uid = uid
         users.insert_one(ExplicitUser(
             _id=uid,
-            ym_token=None
+            ym_token=None,
+            playlists=[],
+            playlists_page=0,
+            queue_page=0
         ))
 
     def update(self, uid: int, data: User) -> None:

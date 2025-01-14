@@ -86,32 +86,16 @@ class Player(View, VoiceExtension):
             return
         guild = self.db.get_guild(ctx.guild.id)
         
-        self.ctx = ctx
-        
-        self.repeat_button_off = ToggleRepeatButton(style=ButtonStyle.secondary, emoji='🔂', row=0)
-        self.repeat_button_on = ToggleRepeatButton(style=ButtonStyle.success, emoji='🔂', row=0)
-        
-        self.shuffle_button_off = ToggleShuffleButton(style=ButtonStyle.secondary, emoji='🔀', row=0)
-        self.shuffle_button_on = ToggleShuffleButton(style=ButtonStyle.success, emoji='🔀', row=0)
-        
+        self.repeat_button = ToggleRepeatButton(style=ButtonStyle.success if guild['repeat'] else ButtonStyle.secondary, emoji='🔂', row=0)
+        self.shuffle_button = ToggleShuffleButton(style=ButtonStyle.success if guild['shuffle'] else ButtonStyle.secondary, emoji='🔀', row=0)
         self.play_pause_button = PlayPauseButton(style=ButtonStyle.primary, emoji='⏯', row=0)
-        
         self.next_button = NextTrackButton(style=ButtonStyle.primary, emoji='⏭', row=0)
         self.prev_button = PrevTrackButton(style=ButtonStyle.primary, emoji='⏮', row=0)
-        
         self.queue_button = Button(style=ButtonStyle.primary, emoji='📋', row=1)
-        
-        if guild['repeat']:
-            self.add_item(self.repeat_button_on)
-        else:
-            self.add_item(self.repeat_button_off)
 
+        self.add_item(self.repeat_button)
         self.add_item(self.prev_button)
         self.add_item(self.play_pause_button)
         self.add_item(self.next_button)
-        
-        if guild['shuffle']:
-            self.add_item(self.shuffle_button_on)
-        else:
-            self.add_item(self.shuffle_button_off)
+        self.add_item(self.shuffle_button)
         

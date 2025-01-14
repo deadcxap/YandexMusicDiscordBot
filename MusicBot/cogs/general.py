@@ -1,4 +1,5 @@
-from typing import cast, TypeAlias
+from math import ceil
+from typing import cast
 
 import discord
 from discord.ext.commands import Cog
@@ -12,6 +13,7 @@ from MusicBot.cogs.utils.find import (
     process_album, process_track, process_artist, process_playlist,
     ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist
 )
+from MusicBot.cogs.utils.misc import MyPlalistsView, generate_playlist_embed
 
 def setup(bot):
     bot.add_cog(General(bot))
@@ -71,7 +73,7 @@ class General(Cog):
                                 "```/account login <token>```\n"
                                 "Удалить токен из датабазы бота.\n```/account remove```")
         elif command == 'queue':
-            embed.description += ("Получить очередь треков. По 25 элементов на страницу.\n```/queue get```\n"
+            embed.description += ("Получить очередь треков. По 15 элементов на страницу.\n```/queue get```\n"
                                 "Очистить очередь треков и историю прослушивания. Требует согласия части слушателей.\n```/queue clear```\n"
                                 "`Примечание`: Если вы один в голосовом канале или имеете роль администратора бота, голосование не требуется.")
         elif command == 'track':
@@ -109,6 +111,22 @@ class General(Cog):
         self.db.update(ctx.user.id, {'ym_token': None})
         await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 
+    @account.command(description="Получить плейлисты пользователя.")
+    async def playlists(self, ctx: discord.ApplicationContext) -> None:
+        token = self.db.get_ym_token(ctx.user.id)
+        if not token:
+            await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
+            return
+        client = await YMClient(token).init()
+        if not client.me or not client.me.account or not client.me.account.uid:
+            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            return
+        playlists_list = await client.users_playlists_list(client.me.account.uid)
+        playlists: list[tuple[str, int]] = [(playlist.title, playlist.track_count) for playlist in playlists_list]  # type: ignore
+        self.db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
+        embed = generate_playlist_embed(0, playlists)
+        await ctx.respond(embed=embed, view=MyPlalistsView(ctx), ephemeral=True)
+    
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
         "name",
@@ -117,7 +135,7 @@ class General(Cog):
     )
     @discord.option(
         "content_type",
-        description="Тип искомого контента (track, album, artist, playlist).",
+        description="Тип искомого контента.",
         type=discord.SlashCommandOptionType.string,
         choices=['Artist', 'Album', 'Track', 'Playlist'],
         default='Track'

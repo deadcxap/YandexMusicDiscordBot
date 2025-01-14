@@ -178,7 +178,7 @@ class VoiceExtension:
         
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
-            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью комманды /login.", delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью команды /login.", delete_after=15, ephemeral=True)
             return False
         
         channel = ctx.channel
@@ -239,10 +239,10 @@ class VoiceExtension:
         
         gid = ctx.guild.id
         guild = self.db.get_guild(gid)
-        await track.download_async(f'music/{ctx.guild_id}.mp3')
-        song = discord.FFmpegPCMAudio(f'music/{ctx.guild_id}.mp3', options='-vn -filter:a "volume=0.15"')
+        await track.download_async(f'music/{ctx.guild.id}.mp3')
+        song = discord.FFmpegPCMAudio(f'music/{ctx.guild.id}.mp3', options='-vn -filter:a "volume=0.15"')
 
-        vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx), loop))
+        vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx, after=True), loop))
         
         self.db.set_current_track(gid, track)
         self.db.update(gid, {'is_stopped': False})
@@ -252,18 +252,6 @@ class VoiceExtension:
             await self.update_player_embed(ctx, player)
         
         return track.title
-
-    def pause_playing(self, ctx: ApplicationContext | Interaction) -> None:
-        vc = self.get_voice_client(ctx)
-        if vc:
-            vc.pause()
-        return
-
-    def resume_playing(self, ctx: ApplicationContext | Interaction) -> None:
-        vc = self.get_voice_client(ctx)
-        if vc:
-            vc.resume()
-        return
 
     def stop_playing(self, ctx: ApplicationContext | Interaction) -> None:
         if not ctx.guild:
@@ -275,12 +263,13 @@ class VoiceExtension:
             vc.stop()
         return
             
-    async def next_track(self, ctx: ApplicationContext | Interaction) -> str | None:
+    async def next_track(self, ctx: ApplicationContext | Interaction, *, after: bool = False) -> str | None:
         """Switch to the next track in the queue. Return track title on success.
         Doesn't change track if stopped. Stop playing if tracks list is empty.
 
         Args:
             ctx (ApplicationContext | Interaction): Context
+            after (bool, optional): Whether the function was called by the after callback. Defaults to False.
 
         Returns:
             str | None: Track title or None.
@@ -300,7 +289,7 @@ class VoiceExtension:
         current_track = guild['current_track']
         ym_track = None
         
-        if guild['repeat'] and current_track:
+        if guild['repeat'] and after:
             return await self.repeat_current_track(ctx)
         elif guild['shuffle']:
             next_track = self.db.get_random_track(gid)
@@ -369,3 +358,33 @@ class VoiceExtension:
             return await self.play_track(ctx, ym_track)  # type: ignore
 
         return None
+
+    async def like_track(self, ctx: ApplicationContext | Interaction) -> str | None:
+        """Like current track. Return track title on success.
+        
+        Args:
+           ctx (ApplicationContext | Interaction): Context.
+        
+        Returns:
+            str | None: Track title or None.
+        """
+        if not ctx.guild or not ctx.user:
+            return None
+        
+        current_track = self.db.get_track(ctx.guild.id, 'current')
+        token = self.users_db.get_ym_token(ctx.user.id)
+        if not current_track or not token:
+            return None
+
+        client = await ClientAsync(token).init()
+        likes = await client.users_likes_tracks()
+        if not likes:
+            return None
+
+        ym_track = cast(Track, Track.de_json(current_track, client=client))  # type: ignore
+        if ym_track.id not in [track.id for track in likes.tracks]:
+            await ym_track.like_async()
+            return ym_track.title
+
+        return None
+        

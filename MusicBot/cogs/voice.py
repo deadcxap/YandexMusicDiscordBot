@@ -1,3 +1,4 @@
+from math import ceil
 from typing import cast
 
 import discord
@@ -7,6 +8,7 @@ from yandex_music import Track, ClientAsync
 
 from MusicBot.cogs.utils.voice import VoiceExtension, generate_player_embed
 from MusicBot.cogs.utils.player import Player
+from MusicBot.cogs.utils.misc import QueueView, generate_queue_embed
 
 def setup(bot: discord.Bot):
     bot.add_cog(Voice())
@@ -74,23 +76,17 @@ class Voice(Cog, VoiceExtension):
     async def get(self, ctx: discord.ApplicationContext) -> None:
         if not await self.voice_check(ctx):
             return
-        tracks_list = self.db.get_tracks_list(ctx.guild.id, 'next')
-        embed = discord.Embed(
-            title='Список треков',
-            color=discord.Color.dark_purple()
-        )
-        for i, track in enumerate(tracks_list, start=1):
-            embed.add_field(name=f"{i} - {track.get('title')}", value="", inline=False)
-            if i == 25:
-                break
-        await ctx.respond("", embed=embed, ephemeral=True)
+        tracks = self.db.get_tracks_list(ctx.guild.id, 'next')
+        self.users_db.update(ctx.user.id, {'queue_page': 0})
+        embed = generate_queue_embed(0, tracks)
+        await ctx.respond(embed=embed, view=QueueView(ctx), ephemeral=True)
     
     @track.command(description="Приостановить текущий трек.")
     async def pause(self, ctx: discord.ApplicationContext) -> None:
         vc = self.get_voice_client(ctx)
         if await self.voice_check(ctx) and vc is not None:
             if not vc.is_paused():
-                self.pause_playing(ctx)
+                vc.pause()
                 await ctx.respond("Воспроизведение приостановлено.", delete_after=15, ephemeral=True)
             else:
                 await ctx.respond("Воспроизведение уже приостановлено.", delete_after=15, ephemeral=True)
@@ -100,7 +96,7 @@ class Voice(Cog, VoiceExtension):
         vc = self.get_voice_client(ctx)
         if await self.voice_check(ctx) and vc is not None:
             if vc.is_paused():
-                self.resume_playing(ctx)
+                vc.resume()
                 await ctx.respond("Воспроизведение восстановлено.", delete_after=15, ephemeral=True)
             else:
                 await ctx.respond("Воспроизведение не на паузе.", delete_after=15, ephemeral=True)
@@ -131,3 +127,15 @@ class Voice(Cog, VoiceExtension):
                 await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
             else:
                 await ctx.respond(f"Нет треков в очереди.", delete_after=15, ephemeral=True)
+                
+    @voice.command(description="Добавить трек в избранное.")
+    async def like(self, ctx: discord.ApplicationContext) -> None:
+        if await self.voice_check(ctx):
+            vc = self.get_voice_client(ctx)
+            if not vc or not vc.is_playing:
+                await ctx.respond("Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            result = await self.like_track(ctx)
+            if not result:
+                await ctx.respond("Трек уже добавлен в избранное.", delete_after=15, ephemeral=True)
+            else:
+                await ctx.respond(f"Трек **{result}** был добавлен в избранное.", delete_after=15, ephemeral=True)
