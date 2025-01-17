@@ -1,4 +1,3 @@
-from math import ceil
 from typing import cast
 
 import discord
@@ -6,7 +5,7 @@ from discord.ext.commands import Cog
 
 from yandex_music import Track, ClientAsync
 
-from MusicBot.cogs.utils.voice import VoiceExtension, generate_player_embed
+from MusicBot.cogs.utils.voice_extension import VoiceExtension, generate_player_embed
 from MusicBot.cogs.utils.player import Player
 from MusicBot.cogs.utils.misc import QueueView, generate_queue_embed
 
@@ -136,6 +135,8 @@ class Voice(Cog, VoiceExtension):
                 await ctx.respond("Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             result = await self.like_track(ctx)
             if not result:
-                await ctx.respond("Трек уже добавлен в избранное.", delete_after=15, ephemeral=True)
+                await ctx.respond("❌ Операция не удалась.", delete_after=15, ephemeral=True)
+            elif result == 'TRACK REMOVED':
+                await ctx.respond("Трек был удалён из избранного.", delete_after=15, ephemeral=True)
             else:
                 await ctx.respond(f"Трек **{result}** был добавлен в избранное.", delete_after=15, ephemeral=True)

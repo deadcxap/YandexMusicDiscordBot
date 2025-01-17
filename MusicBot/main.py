@@ -2,7 +2,6 @@ import os
 import logging
 
 import discord
-from discord.errors import NotFound
 from discord.ext.commands import Bot
 
 try:

@@ -1,7 +1,7 @@
 from discord.ui import View, Button, Item
 from discord import ButtonStyle, Interaction, ApplicationContext
 
-from MusicBot.cogs.utils.voice import VoiceExtension
+from MusicBot.cogs.utils.voice_extension import VoiceExtension
 
 class ToggleRepeatButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -76,6 +76,24 @@ class PrevTrackButton(Button, VoiceExtension):
         title = await self.prev_track(interaction)
         if not title:
             await interaction.respond(f"Нет треков в истории.", delete_after=15, ephemeral=True)
+
+class LikeButton(Button, VoiceExtension):
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self)
+        
+    async def callback(self, interaction: Interaction) -> None:
+        if await self.voice_check(interaction):
+            vc = self.get_voice_client(interaction)
+            if not vc or not vc.is_playing:
+                await interaction.respond("Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            result = await self.like_track(interaction)
+            if not result:
+                await interaction.respond("❌ Операция не удалась.", delete_after=15, ephemeral=True)
+            elif result == 'TRACK REMOVED':
+                await interaction.respond("Трек был удалён из избранного.", delete_after=15, ephemeral=True)
+            else:
+                await interaction.respond(f"Трек **{result}** был добавлен в избранное.", delete_after=15, ephemeral=True)
 
 class Player(View, VoiceExtension):
     

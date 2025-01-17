@@ -1,5 +1,5 @@
-from math import ceil
 from typing import cast
+from asyncio import gather
 
 import discord
 from discord.ext.commands import Cog
@@ -13,7 +13,7 @@ from MusicBot.cogs.utils.find import (
     process_album, process_track, process_artist, process_playlist,
     ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist
 )
-from MusicBot.cogs.utils.misc import MyPlalistsView, generate_playlist_embed
+from MusicBot.cogs.utils.misc import MyPlalists, ListenLikesPlaylist, generate_playlist_embed, generate_likes_embed
 
 def setup(bot):
     bot.add_cog(General(bot))
@@ -51,9 +51,10 @@ class General(Cog):
             embed.add_field(
                 name='__Основные команды__',
                 value="""
+                `account`
                 `find`
                 `help`
-                `account`
+                `like`
                 `queue`
                 `track`
                 `voice`
@@ -62,16 +63,20 @@ class General(Cog):
 
             embed.set_author(name='YandexMusic')
             embed.set_footer(text='©️ Bananchiki')
+        elif command == 'account':
+            embed.description += ("Ввести токен от Яндекс Музыки. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
+                                "```/account login <token>```\n"
+                                "Удалить токен из датабазы бота.\n```/account remove```\n"
+                                "Получить ваши плейлисты. Чтобы добавить плейлист в очередь, используйте команду /find.\n```/account playlists```\n"
+                                "Получить плейлист «Мне нравится». \n```/account likes```\n")
         elif command == 'find':
             embed.description += ("Вывести информацию о треке (по умолчанию), альбоме, авторе или плейлисте. Позволяет добавить музыку в очередь. "
                                 "В названии можно уточнить автора или версию. Возвращается лучшее совпадение.\n```/find <название> <тип>```")
         elif command == 'help':
             embed.description += ("Вывести список всех команд.\n```/help```\n"
                                 "Получить информацию о конкретной команде.\n```/help <команда>```")
-        elif command == 'account':
-            embed.description += ("Ввести токен от Яндекс Музыки. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
-                                "```/account login <token>```\n"
-                                "Удалить токен из датабазы бота.\n```/account remove```")
+        elif command == 'like':
+            embed.description += "Добавить трек в плейлист «Мне нравится».\n```/like```"
         elif command == 'queue':
             embed.description += ("Получить очередь треков. По 15 элементов на страницу.\n```/queue get```\n"
                                 "Очистить очередь треков и историю прослушивания. Требует согласия части слушателей.\n```/queue clear```\n"
@@ -111,7 +116,27 @@ class General(Cog):
         self.db.update(ctx.user.id, {'ym_token': None})
         await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 
-    @account.command(description="Получить плейлисты пользователя.")
+    @account.command(description="Получить плейлист «Мне нравится»")
+    async def likes(self, ctx: discord.ApplicationContext) -> None:
+        token = self.db.get_ym_token(ctx.user.id)
+        if not token:
+            await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
+            return
+        client = await YMClient(token).init()
+        if not client.me or not client.me.account or not client.me.account.uid:
+            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            return
+        likes = await client.users_likes_tracks()
+        if not likes:
+            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            return
+        
+        real_tracks = await gather(*[track_short.fetch_track_async() for track_short in likes.tracks], return_exceptions=True)
+        tracks = [track for track in real_tracks if not isinstance(track, BaseException)]  # Can't fetch user tracks
+        embed = generate_likes_embed(tracks)
+        await ctx.respond(embed=embed, view=ListenLikesPlaylist(tracks))
+    
+    @account.command(description="Получить ваши плейлисты.")
     async def playlists(self, ctx: discord.ApplicationContext) -> None:
         token = self.db.get_ym_token(ctx.user.id)
         if not token:
@@ -125,7 +150,7 @@ class General(Cog):
         playlists: list[tuple[str, int]] = [(playlist.title, playlist.track_count) for playlist in playlists_list]  # type: ignore
         self.db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
         embed = generate_playlist_embed(0, playlists)
-        await ctx.respond(embed=embed, view=MyPlalistsView(ctx), ephemeral=True)
+        await ctx.respond(embed=embed, view=MyPlalists(ctx), ephemeral=True)
     
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
@@ -137,7 +162,7 @@ class General(Cog):
         "content_type",
         description="Тип искомого контента.",
         type=discord.SlashCommandOptionType.string,
-        choices=['Artist', 'Album', 'Track', 'Playlist'],
+        choices=['Artist', 'Album', 'Track', 'Playlist', 'User Playlist'],
         default='Track'
     )
     async def find(
@@ -146,10 +171,9 @@ class General(Cog):
         name: str,
         content_type: str = 'Track'
     ) -> None:
-        if content_type not in ['Artist', 'Album', 'Track', 'Playlist']:
+        if content_type not in ['Artist', 'Album', 'Track', 'Playlist', 'User Playlist']:
             await ctx.respond("❌ Недопустимый тип.", delete_after=15, ephemeral=True)
             return
-        content_type = content_type.lower()
         
         token = self.db.get_ym_token(ctx.user.id)
         if not token:
@@ -161,28 +185,45 @@ class General(Cog):
             await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
             return
         
-        result = await client.search(name, True, content_type)
-        
-        if not result:
-            await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже", delete_after=15, ephemeral=True)
-            return
-
-        if content_type == 'album' and result.albums:
-            album = result.albums.results[0]
-            embed = await process_album(album)
-            await ctx.respond(embed=embed, view=ListenAlbum(album))
-        elif content_type == 'track' and result.tracks:
-            track: yandex_music.Track = result.tracks.results[0]
-            album_id = cast(int, track.albums[0].id)
-            embed = await process_track(track)
-            await ctx.respond(embed=embed, view=ListenTrack(track, album_id))
-        elif content_type == 'artist' and result.artists:
-            artist = result.artists.results[0]
-            embed = await process_artist(artist)
-            await ctx.respond(embed=embed, view=ListenArtist(artist))
-        elif content_type == 'playlist' and result.playlists:
-            playlist = result.playlists.results[0]
-            embed = await process_playlist(playlist)
-            await ctx.respond(embed=embed, view=ListenPlaylist(playlist))
+        if content_type == 'User Playlist':
+            if not client.me or not client.me.account or not client.me.account.uid:
+                await ctx.respond("❌ Не удалось получить информацию о пользователе.", delete_after=15, ephemeral=True)
+                return
+            playlists = await client.users_playlists_list(client.me.account.uid)
+            result = None
+            for playlist in playlists:
+                if playlist.title == name:
+                    result = playlist
+                    break
+            else:
+                await ctx.respond("❌ Плейлист не найден.", delete_after=15, ephemeral=True)
+                return
+            
+            embed = await process_playlist(result)
+            await ctx.respond(embed=embed, view=ListenPlaylist(result))
         else:
-            await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)
+            result = await client.search(name, True, content_type.lower())
+        
+            if not result:
+                await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже", delete_after=15, ephemeral=True)
+                return
+
+            if content_type == 'Album' and result.albums:
+                album = result.albums.results[0]
+                embed = await process_album(album)
+                await ctx.respond(embed=embed, view=ListenAlbum(album))
+            elif content_type == 'Track' and result.tracks:
+                track: yandex_music.Track = result.tracks.results[0]
+                album_id = cast(int, track.albums[0].id)
+                embed = await process_track(track)
+                await ctx.respond(embed=embed, view=ListenTrack(track, album_id))
+            elif content_type == 'Artist' and result.artists:
+                artist = result.artists.results[0]
+                embed = await process_artist(artist)
+                await ctx.respond(embed=embed, view=ListenArtist(artist))
+            elif content_type == 'Playlist' and result.playlists:
+                playlist = result.playlists.results[0]
+                embed = await process_playlist(playlist)
+                await ctx.respond(embed=embed, view=ListenPlaylist(playlist))
+            else:
+                await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)

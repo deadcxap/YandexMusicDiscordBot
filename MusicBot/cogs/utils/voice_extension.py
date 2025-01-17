@@ -2,7 +2,7 @@ import aiohttp
 import asyncio
 from os import getenv
 from math import ceil
-from typing import cast
+from typing import Literal, cast
 from io import BytesIO
 from PIL import Image
 
@@ -359,7 +359,7 @@ class VoiceExtension:
 
         return None
 
-    async def like_track(self, ctx: ApplicationContext | Interaction) -> str | None:
+    async def like_track(self, ctx: ApplicationContext | Interaction) -> str | Literal['TRACK REMOVED'] | None:
         """Like current track. Return track title on success.
         
         Args:
@@ -385,6 +385,7 @@ class VoiceExtension:
         if ym_track.id not in [track.id for track in likes.tracks]:
             await ym_track.like_async()
             return ym_track.title
-
-        return None
+        else:
+            await client.users_likes_tracks_remove(ym_track.id, client.me.account.uid)  # type: ignore
+            return 'TRACK REMOVED'
         

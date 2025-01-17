@@ -1,3 +1,4 @@
+from asyncio import gather
 from os import getenv
 from math import ceil
 from typing import cast
@@ -8,7 +9,7 @@ from yandex_music import Track, Album, Artist, Playlist, Label
 from discord.ui import View, Button, Item
 from discord import ButtonStyle, Interaction, Embed
 
-from MusicBot.cogs.utils.voice import VoiceExtension, get_average_color_from_url
+from MusicBot.cogs.utils.voice_extension import VoiceExtension, get_average_color_from_url
 
 class PlayTrackButton(Button, VoiceExtension):
     
@@ -120,7 +121,8 @@ class PlayPlaylistButton(Button, VoiceExtension):
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
 
-        tracks: list[Track] = [cast(Track, short_track.track) for short_track in short_tracks]
+        real_tracks = await gather(*[track_short.fetch_track_async() for track_short in self.playlist.tracks], return_exceptions=True)
+        tracks = [track for track in real_tracks if not isinstance(track, BaseException)]  # Can't fetch user tracks
 
         if guild['current_track'] is not None:
             self.db.modify_track(gid, tracks, 'next', 'extend')
@@ -418,8 +420,23 @@ async def process_playlist(playlist: Playlist) -> Embed:
     duration = playlist.duration_ms
     likes_count = playlist.likes_count
 
-    cover_url = f"https://{playlist.cover.uri.replace('%%', '400x400')}"  # type: ignore
-    color = await get_average_color_from_url(cover_url)
+    color = 0x000
+    cover_url = None
+    
+    if playlist.cover and playlist.cover.uri:
+        cover_url = f"https://{playlist.cover.uri.replace('%%', '400x400')}"
+    else:
+        tracks = await playlist.fetch_tracks_async()
+        for i in range(len(tracks)):
+            track = tracks[i].track
+            try:
+                cover_url = f"https://{track.albums[0].cover_uri.replace('%%', '400x400')}"  # type: ignore
+                break
+            except TypeError:
+                continue 
+
+    if cover_url:
+        color = await get_average_color_from_url(cover_url)
 
     embed = discord.Embed(
         title=title,
