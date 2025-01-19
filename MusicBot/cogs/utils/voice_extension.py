@@ -9,7 +9,7 @@ from PIL import Image
 from yandex_music import Track, ClientAsync
 
 import discord
-from discord import Interaction, ApplicationContext
+from discord import Interaction, ApplicationContext, RawReactionActionEvent
 
 from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
 
@@ -129,7 +129,8 @@ async def get_average_color_from_url(url: str) -> int:
 
 class VoiceExtension:
     
-    def __init__(self) -> None:
+    def __init__(self, bot: discord.Bot | None) -> None:
+        self.bot = bot
         self.db = VoiceGuildsDatabase()
         self.users_db = BaseUsersDatabase()
 
@@ -141,10 +142,13 @@ class VoiceExtension:
             player_mid (int): Id of the player message. There can only be only one player in the guild.
         """
         
-        if isinstance(ctx, Interaction):
-            player = ctx.client.get_message(player_mid)
-        else:
-            player = await ctx.fetch_message(player_mid)
+        try:
+            if isinstance(ctx, Interaction):
+                player = ctx.client.get_message(player_mid)
+            else:
+                player = await ctx.fetch_message(player_mid)
+        except discord.DiscordException:
+            return
         
         if not player:
             return
@@ -197,7 +201,7 @@ class VoiceExtension:
         
         return True
     
-    def get_voice_client(self, ctx: ApplicationContext | Interaction) -> discord.VoiceClient | None:
+    async def get_voice_client(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> discord.VoiceClient | None:
         """Return voice client for the given guild id. Return None if not present.
 
         Args:
@@ -209,12 +213,18 @@ class VoiceExtension:
         
         if isinstance(ctx, Interaction):
             voice_chat = discord.utils.get(ctx.client.voice_clients, guild=ctx.guild)
+        elif isinstance(ctx, RawReactionActionEvent):
+            if not self.bot:
+                raise ValueError("Bot is not set.")
+            if not ctx.guild_id:
+                return
+            voice_chat = discord.utils.get(self.bot.voice_clients, guild=await self.bot.fetch_guild(ctx.guild_id))
         else:
             voice_chat = discord.utils.get(ctx.bot.voice_clients, guild=ctx.guild)
         
-        return cast(discord.VoiceClient, voice_chat)
+        return cast((discord.VoiceClient | None), voice_chat)
     
-    async def play_track(self, ctx: ApplicationContext | Interaction, track: Track) -> str | None:
+    async def play_track(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, track: Track) -> str | None:
         """Download ``track`` by its id and play it in the voice channel. Return track title on success.
         If sound is already playing, add track id to the queue. There's no response to the context.
 
@@ -225,22 +235,27 @@ class VoiceExtension:
         Returns:
             str | None: Song title or None.
         """
-        if not ctx.guild:
+        gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        if not gid or not uid:
             return None
 
-        vc = self.get_voice_client(ctx)
+        vc = await self.get_voice_client(ctx)
         if not vc:
             return None
         
         if isinstance(ctx, Interaction):
             loop = ctx.client.loop
-        else:
+        elif isinstance(ctx, ApplicationContext):
             loop = ctx.bot.loop
+        else:
+            if not self.bot:
+                raise ValueError("Bot is not set.")
+            loop = self.bot.loop
         
-        gid = ctx.guild.id
         guild = self.db.get_guild(gid)
-        await track.download_async(f'music/{ctx.guild.id}.mp3')
-        song = discord.FFmpegPCMAudio(f'music/{ctx.guild.id}.mp3', options='-vn -filter:a "volume=0.15"')
+        await track.download_async(f'music/{gid}.mp3')
+        song = discord.FFmpegPCMAudio(f'music/{gid}.mp3', options='-vn -filter:a "volume=0.15"')
 
         vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx, after=True), loop))
         
@@ -248,22 +263,23 @@ class VoiceExtension:
         self.db.update(gid, {'is_stopped': False})
         
         player = guild['current_player']
-        if player is not None:
+        if player is not None and not isinstance(ctx, discord.RawReactionActionEvent):
             await self.update_player_embed(ctx, player)
         
         return track.title
 
-    def stop_playing(self, ctx: ApplicationContext | Interaction) -> None:
-        if not ctx.guild:
+    async def stop_playing(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> None:
+        gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
+        if not gid:
             return
 
-        vc = self.get_voice_client(ctx)
+        vc = await self.get_voice_client(ctx)
         if vc:
-            self.db.update(ctx.guild.id, {'current_track': None, 'is_stopped': True})
+            self.db.update(gid, {'current_track': None, 'is_stopped': True})
             vc.stop()
         return
             
-    async def next_track(self, ctx: ApplicationContext | Interaction, *, after: bool = False) -> str | None:
+    async def next_track(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, *, after: bool = False) -> str | None:
         """Switch to the next track in the queue. Return track title on success.
         Doesn't change track if stopped. Stop playing if tracks list is empty.
 
@@ -274,16 +290,18 @@ class VoiceExtension:
         Returns:
             str | None: Track title or None.
         """
-        if not ctx.guild or not ctx.user:
-            return None
+        gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        if not gid or not uid:
+            return
         
-        gid = ctx.guild.id
         guild = self.db.get_guild(gid)
-        token = self.users_db.get_ym_token(ctx.user.id)
+        token = self.users_db.get_ym_token(uid)
+        title = None
         if guild['is_stopped']:
             return None
     
-        if not self.get_voice_client(ctx):  # Silently return if bot got kicked
+        if not await self.get_voice_client(ctx):  # Silently return if bot got kicked
             return None
         
         current_track = guild['current_track']
@@ -296,15 +314,18 @@ class VoiceExtension:
         else:
             next_track = self.db.get_track(gid, 'next')
         
-        if current_track:
+        if current_track and guild['current_player']:
             self.db.modify_track(gid, current_track, 'previous', 'insert')
             
         if next_track:
             ym_track = Track.de_json(next_track, client=ClientAsync(token))  # type: ignore
-            self.stop_playing(ctx)
-            return await self.play_track(ctx, ym_track)  # type: ignore
-        
-        return None
+            await self.stop_playing(ctx)
+            title = await self.play_track(ctx, ym_track)  # type: ignore
+
+            if after and not guild['current_player'] and not isinstance(ctx, discord.RawReactionActionEvent):
+                await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
+
+        return title
 
     async def prev_track(self, ctx: ApplicationContext | Interaction) -> str | None:
         """Switch to the previous track in the queue. Repeat curren the song if no previous tracks.
@@ -328,14 +349,14 @@ class VoiceExtension:
         title = None
         if prev_track:
             ym_track = Track.de_json(prev_track, client=ClientAsync(token))  # type: ignore
-            self.stop_playing(ctx)
+            await self.stop_playing(ctx)
             title = await self.play_track(ctx, ym_track)  # type: ignore
         elif current_track:
             title = await self.repeat_current_track(ctx)
         
         return title
     
-    async def repeat_current_track(self, ctx: ApplicationContext | Interaction) -> str | None:
+    async def repeat_current_track(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> str | None:
         """Repeat current track. Return track title on success.
 
         Args:
@@ -345,16 +366,17 @@ class VoiceExtension:
             str | None: Track title or None.
         """
         
-        if not ctx.guild or not ctx.user:
-            return None
+        gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        if not gid or not uid:
+            return
         
-        gid = ctx.guild.id
-        token = self.users_db.get_ym_token(ctx.user.id)
+        token = self.users_db.get_ym_token(gid)
         
         current_track = self.db.get_track(gid, 'current')
         if current_track:
             ym_track = Track.de_json(current_track, client=ClientAsync(token))  # type: ignore
-            self.stop_playing(ctx)
+            await self.stop_playing(ctx)
             return await self.play_track(ctx, ym_track)  # type: ignore
 
         return None

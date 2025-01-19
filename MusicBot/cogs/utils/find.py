@@ -15,7 +15,7 @@ class PlayTrackButton(Button, VoiceExtension):
     
     def __init__(self, track: Track, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         self.track = track
     
     async def callback(self, interaction: Interaction) -> None:
@@ -41,7 +41,7 @@ class PlayAlbumButton(Button, VoiceExtension):
     
     def __init__(self, album: Album, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         self.album = album
         
     async def callback(self, interaction: Interaction) -> None:
@@ -74,7 +74,7 @@ class PlayAlbumButton(Button, VoiceExtension):
 class PlayArtistButton(Button, VoiceExtension):
     def __init__(self, artist: Artist, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         self.artist = artist
     
     async def callback(self, interaction: Interaction) -> None:
@@ -88,7 +88,7 @@ class PlayArtistButton(Button, VoiceExtension):
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
 
-        tracks: list[Track] = artist_tracks.tracks
+        tracks: list[Track] = artist_tracks.tracks.copy()
 
         if guild['current_track'] is not None:
             self.db.modify_track(gid, tracks, 'next', 'extend')
@@ -107,7 +107,7 @@ class PlayArtistButton(Button, VoiceExtension):
 class PlayPlaylistButton(Button, VoiceExtension):
     def __init__(self, playlist: Playlist, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         self.playlist = playlist
     
     async def callback(self, interaction: Interaction) -> None:

@@ -77,7 +77,8 @@ class BaseGuildsDatabase:
             current_player=None,
             is_stopped=True,
             allow_explicit=True,
-            allow_menu=True,
+            always_allow_menu=False,
+            disable_vote=False,
             shuffle=False,
             repeat=False
         ))

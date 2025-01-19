@@ -7,7 +7,8 @@ class Guild(TypedDict, total=False):
     current_player: int | None
     is_stopped: bool
     allow_explicit: bool
-    allow_menu: bool
+    always_allow_menu: bool
+    disable_vote: bool
     shuffle: bool
     repeat: bool
 
@@ -19,6 +20,7 @@ class ExplicitGuild(TypedDict):
     current_player: int | None
     is_stopped: bool  # Prevents the `after` callback of play_track
     allow_explicit: bool
-    allow_menu: bool  # /toggle menu is only available if there's only one user in the voice chat.
+    always_allow_menu: bool
+    disable_vote: bool
     shuffle: bool
     repeat: bool

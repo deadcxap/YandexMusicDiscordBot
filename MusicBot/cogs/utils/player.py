@@ -6,7 +6,7 @@ from MusicBot.cogs.utils.voice_extension import VoiceExtension
 class ToggleRepeatButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.guild:
@@ -19,7 +19,7 @@ class ToggleRepeatButton(Button, VoiceExtension):
 class ToggleShuffleButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.guild:
@@ -32,13 +32,13 @@ class ToggleShuffleButton(Button, VoiceExtension):
 class PlayPauseButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not await self.voice_check(interaction):
             return
 
-        vc = self.get_voice_client(interaction)
+        vc = await self.get_voice_client(interaction)
         if not vc or not interaction.message:
             return
 
@@ -56,7 +56,7 @@ class PlayPauseButton(Button, VoiceExtension):
 class NextTrackButton(Button, VoiceExtension):    
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not await self.voice_check(interaction):
@@ -68,7 +68,7 @@ class NextTrackButton(Button, VoiceExtension):
 class PrevTrackButton(Button, VoiceExtension):    
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not await self.voice_check(interaction):
@@ -80,11 +80,11 @@ class PrevTrackButton(Button, VoiceExtension):
 class LikeButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         
     async def callback(self, interaction: Interaction) -> None:
         if await self.voice_check(interaction):
-            vc = self.get_voice_client(interaction)
+            vc = await self.get_voice_client(interaction)
             if not vc or not vc.is_playing:
                 await interaction.respond("Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             result = await self.like_track(interaction)
@@ -99,7 +99,7 @@ class Player(View, VoiceExtension):
     
     def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         if not ctx.guild:
             return
         guild = self.db.get_guild(ctx.guild.id)

@@ -64,22 +64,23 @@ def generate_queue_embed(page: int, tracks_list: list[dict[str, Any]]) -> Embed:
 class PlayLikesButton(Button, VoiceExtension):
     def __init__(self, playlist: list[Track], **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         self.playlist = playlist
     
     async def callback(self, interaction: Interaction):
         if not interaction.guild or not await self.voice_check(interaction):
             return
 
+        playlist = self.playlist.copy()
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
 
         if guild['current_track'] is not None:
-            self.db.modify_track(gid, self.playlist, 'next', 'extend')
+            self.db.modify_track(gid, playlist, 'next', 'extend')
             response_message = f"Плейлист **«Мне нравится»** был добавлен в очередь."
         else:
-            track = self.playlist.pop(0)
-            self.db.modify_track(gid, self.playlist, 'next', 'extend')
+            track = playlist.pop(0)
+            self.db.modify_track(gid, playlist, 'next', 'extend')
             await self.play_track(interaction, track)
             response_message = f"Сейчас играет плейлист **«Мне нравится»**!"
 
@@ -96,7 +97,7 @@ class ListenLikesPlaylist(View):
 class MPNextButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user:
@@ -110,7 +111,7 @@ class MPNextButton(Button, VoiceExtension):
 class MPPrevButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user:
@@ -124,7 +125,7 @@ class MPPrevButton(Button, VoiceExtension):
 class MyPlalists(View, VoiceExtension):
     def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         if not ctx.user:
             return
         user = self.users_db.get_user(ctx.user.id)
@@ -144,7 +145,7 @@ class MyPlalists(View, VoiceExtension):
 class QNextButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user or not interaction.guild:
@@ -159,7 +160,7 @@ class QNextButton(Button, VoiceExtension):
 class QPrevButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user or not interaction.guild:
@@ -174,7 +175,7 @@ class QPrevButton(Button, VoiceExtension):
 class QueueView(View, VoiceExtension):
     def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        VoiceExtension.__init__(self)
+        VoiceExtension.__init__(self, None)
         if not ctx.user or not ctx.guild:
             return
 
