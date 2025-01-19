@@ -147,7 +147,9 @@ class General(Cog):
             await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
             return
         playlists_list = await client.users_playlists_list(client.me.account.uid)
-        playlists: list[tuple[str, int]] = [(playlist.title, playlist.track_count) for playlist in playlists_list]  # type: ignore
+        playlists: list[tuple[str, int]] = [
+            (playlist.title if playlist.title else 'Без названия', playlist.track_count if playlist.track_count else 0) for playlist in playlists_list
+        ]
         self.db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
         embed = generate_playlist_embed(0, playlists)
         await ctx.respond(embed=embed, view=MyPlalists(ctx), ephemeral=True)

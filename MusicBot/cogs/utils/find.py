@@ -1,4 +1,3 @@
-from asyncio import gather
 from os import getenv
 from math import ceil
 from typing import cast
@@ -64,7 +63,7 @@ class PlayAlbumButton(Button, VoiceExtension):
             track = tracks.pop(0)
             self.db.modify_track(gid, tracks, 'next', 'extend')
             await self.play_track(interaction, track)
-            response_message = f"Сейчас играет: **{album.title}**!"
+            response_message = f"Сейчас играет: **{track.title}**!"
 
         if guild['current_player'] is not None and interaction.message:
             await interaction.message.delete()
@@ -97,7 +96,7 @@ class PlayArtistButton(Button, VoiceExtension):
             track = tracks.pop(0)
             self.db.modify_track(gid, tracks, 'next', 'extend')
             await self.play_track(interaction, track)
-            response_message = f"Сейчас играет: **{self.artist.name}**!"
+            response_message = f"Сейчас играет: **{track.title}**!"
 
         if guild['current_player'] is not None and interaction.message:
             await interaction.message.delete()
@@ -116,13 +115,13 @@ class PlayPlaylistButton(Button, VoiceExtension):
 
         short_tracks = await self.playlist.fetch_tracks_async()
         if not short_tracks:
+            await interaction.respond("Не удалось получить треки из плейлиста.", delete_after=15)
             return
 
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
 
-        real_tracks = await gather(*[track_short.fetch_track_async() for track_short in self.playlist.tracks], return_exceptions=True)
-        tracks = [track for track in real_tracks if not isinstance(track, BaseException)]  # Can't fetch user tracks
+        tracks: list[Track] = [cast(Track, short_track.track) for short_track in short_tracks]
 
         if guild['current_track'] is not None:
             self.db.modify_track(gid, tracks, 'next', 'extend')
@@ -148,8 +147,9 @@ class ListenTrack(View):
         self.button2: Button = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         self.button3: PlayTrackButton = PlayTrackButton(track, label="Слушать в голосовом канале", style=ButtonStyle.gray)
         # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
-        self.add_item(self.button2)
-        self.add_item(self.button3)
+        if track.available:
+            self.add_item(self.button2)
+            self.add_item(self.button3)
     
 class ListenAlbum(View):
     
@@ -161,8 +161,9 @@ class ListenAlbum(View):
         self.button2: Button = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         self.button3: PlayAlbumButton = PlayAlbumButton(album, label="Слушать в голосовом канале", style=ButtonStyle.gray)
         # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
-        self.add_item(self.button2)
-        self.add_item(self.button3)
+        if album.available:
+            self.add_item(self.button2)
+            self.add_item(self.button3)
 
 class ListenArtist(View):
     
@@ -174,8 +175,9 @@ class ListenArtist(View):
         self.button2: Button = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         self.button3: PlayArtistButton = PlayArtistButton(artist, label="Слушать в голосовом канале", style=ButtonStyle.gray)
         # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
-        self.add_item(self.button2)
-        self.add_item(self.button3)
+        if artist.available:
+            self.add_item(self.button2)
+            self.add_item(self.button3)
 
 class ListenPlaylist(View):
     def __init__(self, playlist: Playlist, *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
@@ -186,8 +188,9 @@ class ListenPlaylist(View):
         self.button2: Button = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         self.button3: PlayPlaylistButton = PlayPlaylistButton(playlist, label="Слушать в голосовом канале", style=ButtonStyle.gray)
         # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
-        self.add_item(self.button2)
-        self.add_item(self.button3)
+        if playlist.available:
+            self.add_item(self.button2)
+            self.add_item(self.button3)
 
 async def process_track(track: Track) -> Embed:
     """Generate track embed.
@@ -430,10 +433,10 @@ async def process_playlist(playlist: Playlist) -> Embed:
         for i in range(len(tracks)):
             track = tracks[i].track
             try:
-                cover_url = f"https://{track.albums[0].cover_uri.replace('%%', '400x400')}"  # type: ignore
+                cover_url = f"https://{track.albums[0].cover_uri.replace('%%', '400x400')}"  # type: ignore  # Errors are being caught below.
                 break
-            except TypeError:
-                continue 
+            except (TypeError, IndexError):
+                continue
 
     if cover_url:
         color = await get_average_color_from_url(cover_url)

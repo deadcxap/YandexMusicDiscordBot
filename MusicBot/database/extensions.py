@@ -121,7 +121,7 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
             else:
                 raise ValueError(f"Unknown operation '{operation}'")
 
-            self.update(gid, {explicit_type: tracks}) # type: ignore
+            self.update(gid, {explicit_type: tracks})  # type: ignore
         
         return pop_track
 

@@ -33,11 +33,18 @@ async def generate_player_embed(track: Track) -> discord.Embed:
     explicit = track.explicit or track.content_warning
     bg_video = track.background_video_uri
     metadata = track.meta_data
-    year = track.albums[0].year
-    artist = track.artists[0]
+    year = track.albums[0].year if track.albums else None
+    artist = track.artists[0] if track.artists else None
 
-    cover_url = track.get_cover_url('400x400')
-    color = await get_average_color_from_url(cover_url)
+    if track.cover_uri:
+        cover_url = f"https://{track.cover_uri.replace('%%', '400x400')}"
+    else:
+        cover_url = None
+
+    if cover_url:
+        color = await get_average_color_from_url(cover_url)
+    else:
+        color = None
 
     if explicit:
         explicit_eid = getenv('EXPLICIT_EID')
@@ -48,12 +55,18 @@ async def generate_player_embed(track: Track) -> discord.Embed:
     duration_m = duration // 60000
     duration_s = ceil(duration / 1000) - duration_m * 60
 
-    artist_url = f"https://music.yandex.ru/artist/{artist.id}"
-    artist_cover = artist.cover
-    if not artist_cover:
-        artist_cover_url = artist.get_op_image_url()
+    if artist:
+        artist_url = f"https://music.yandex.ru/artist/{artist.id}"
+        artist_cover = artist.cover if artist else None
+        if artist and not artist_cover:
+            artist_cover_url = artist.get_op_image_url()
+        elif artist_cover:
+            artist_cover_url = artist_cover.get_url()
+        else:
+            artist_cover_url = None
     else:
-        artist_cover_url = artist_cover.get_url()
+        artist_url = None
+        artist_cover_url = None
 
     embed = discord.Embed(
         title=title,
@@ -134,7 +147,7 @@ class VoiceExtension:
         self.db = VoiceGuildsDatabase()
         self.users_db = BaseUsersDatabase()
 
-    async def update_player_embed(self, ctx: ApplicationContext | Interaction, player_mid: int) -> None:
+    async def update_player_embed(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, player_mid: int) -> None:
         """Update current player message by its id.
 
         Args:
@@ -145,20 +158,31 @@ class VoiceExtension:
         try:
             if isinstance(ctx, Interaction):
                 player = ctx.client.get_message(player_mid)
-            else:
+            elif isinstance(ctx, RawReactionActionEvent) and self.bot:
+                player = self.bot.get_message(player_mid)
+            elif isinstance(ctx, ApplicationContext):
                 player = await ctx.fetch_message(player_mid)
+            else:
+                player = None
         except discord.DiscordException:
             return
         
         if not player:
             return
         
-        guild = ctx.guild
-        user = ctx.user
-        if guild and user:
-            token = self.users_db.get_ym_token(user.id)
-            current_track = self.db.get_track(guild.id, 'current')
-            track = cast(Track, Track.de_json(current_track, client=ClientAsync(token)))   # type: ignore
+        gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        
+        if gid and uid:
+            token = self.users_db.get_ym_token(uid)
+            current_track = self.db.get_track(gid, 'current')
+            if not current_track:
+                return
+            track = cast(Track, Track.de_json(
+                current_track,
+                client=ClientAsync(token)  # type: ignore  # Async client can be used here.
+                )
+            )
             embed = await generate_player_embed(track)
             
             if isinstance(ctx, Interaction) and ctx.message and ctx.message.id == player_mid:
@@ -263,7 +287,7 @@ class VoiceExtension:
         self.db.update(gid, {'is_stopped': False})
         
         player = guild['current_player']
-        if player is not None and not isinstance(ctx, discord.RawReactionActionEvent):
+        if player is not None:
             await self.update_player_embed(ctx, player)
         
         return track.title
@@ -318,9 +342,15 @@ class VoiceExtension:
             self.db.modify_track(gid, current_track, 'previous', 'insert')
             
         if next_track:
-            ym_track = Track.de_json(next_track, client=ClientAsync(token))  # type: ignore
+            ym_track = Track.de_json(
+                next_track,
+                client=ClientAsync(token)  # type: ignore  # Async client can be used here.
+            )
             await self.stop_playing(ctx)
-            title = await self.play_track(ctx, ym_track)  # type: ignore
+            title = await self.play_track(
+                ctx,
+                ym_track  # type: ignore  # de_json should always work here.
+            )
 
             if after and not guild['current_player'] and not isinstance(ctx, discord.RawReactionActionEvent):
                 await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
@@ -348,9 +378,15 @@ class VoiceExtension:
         
         title = None
         if prev_track:
-            ym_track = Track.de_json(prev_track, client=ClientAsync(token))  # type: ignore
+            ym_track = Track.de_json(
+                prev_track,
+                client=ClientAsync(token)  # type: ignore  # Async client can be used here.
+            )
             await self.stop_playing(ctx)
-            title = await self.play_track(ctx, ym_track)  # type: ignore
+            title = await self.play_track(
+                ctx,
+                ym_track  # type: ignore  # de_json should always work here.
+            )
         elif current_track:
             title = await self.repeat_current_track(ctx)
         
@@ -375,9 +411,15 @@ class VoiceExtension:
         
         current_track = self.db.get_track(gid, 'current')
         if current_track:
-            ym_track = Track.de_json(current_track, client=ClientAsync(token))  # type: ignore
+            ym_track = Track.de_json(
+                current_track,
+                client=ClientAsync(token)  # type: ignore  # Async client can be used here.
+            )
             await self.stop_playing(ctx)
-            return await self.play_track(ctx, ym_track)  # type: ignore
+            return await self.play_track(
+                ctx,
+                ym_track  # type: ignore  # de_json should always work here.
+            )
 
         return None
 
@@ -403,11 +445,17 @@ class VoiceExtension:
         if not likes:
             return None
 
-        ym_track = cast(Track, Track.de_json(current_track, client=client))  # type: ignore
+        ym_track = cast(Track, Track.de_json(
+            current_track,
+            client=client  # type: ignore  # Async client can be used here.
+            )
+        )
         if ym_track.id not in [track.id for track in likes.tracks]:
             await ym_track.like_async()
             return ym_track.title
         else:
-            await client.users_likes_tracks_remove(ym_track.id, client.me.account.uid)  # type: ignore
+            if not client.me or not client.me.account or not client.me.account.uid:
+                return None
+            await client.users_likes_tracks_remove(ym_track.id, client.me.account.uid)
             return 'TRACK REMOVED'
         

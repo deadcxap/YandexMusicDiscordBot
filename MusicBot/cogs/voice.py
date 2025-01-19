@@ -57,7 +57,10 @@ class Voice(Cog, VoiceExtension):
 
     @Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
-        bot_id = self.bot.user.id  # type: ignore
+        if not self.bot.user or not payload.member:
+            return
+        
+        bot_id = self.bot.user.id
         if payload.user_id == bot_id:
             return
 
@@ -70,7 +73,7 @@ class Voice(Cog, VoiceExtension):
             return
 
         if not self.users_db.get_ym_token(payload.user_id):
-            await message.remove_reaction(payload.emoji, payload.member)  # type: ignore
+            await message.remove_reaction(payload.emoji, payload.member)
             await channel.send("Для участия в голосовании необходимо авторизоваться через /account login.", delete_after=15)
             return
         
@@ -114,6 +117,9 @@ class Voice(Cog, VoiceExtension):
 
     @Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        if not self.bot.user:
+            return
+        
         guild_id = payload.guild_id
         if guild_id not in self.vote_messages:
             return
@@ -126,7 +132,7 @@ class Voice(Cog, VoiceExtension):
             return
 
         message = await channel.fetch_message(payload.message_id)
-        if not message or message.author.id != self.bot.user.id:  # type: ignore
+        if not message or message.author.id != self.bot.user.id:
             return
 
         vote_data = self.vote_messages[guild_id][payload.message_id]
@@ -149,7 +155,12 @@ class Voice(Cog, VoiceExtension):
             return
 
         if guild['current_track']:
-            embed = await generate_player_embed(Track.de_json(guild['current_track'], client=ClientAsync()))  # type: ignore
+            embed = await generate_player_embed(
+                Track.de_json(
+                    guild['current_track'],
+                    client=ClientAsync()  # type: ignore  # Async client can be used here.
+                    )
+                )
             vc = await self.get_voice_client(ctx)
             if vc and vc.is_paused():
                 embed.set_footer(text='Приостановлено')

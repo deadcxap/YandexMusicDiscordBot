@@ -56,9 +56,10 @@ def generate_queue_embed(page: int, tracks_list: list[dict[str, Any]]) -> Embed:
     embed.set_footer(text=f"Страница {page + 1} из {ceil(length / 15)}")
     for i, track in enumerate(tracks_list[count:count + 15], start=1 + count):
         duration = track['duration_ms']
-        duration_m = duration // 60000
-        duration_s = ceil(duration / 1000) - duration_m * 60
-        embed.add_field(name=f"{i} - {track['title']} - {duration_m}:{duration_s:02d}", value="", inline=False)
+        if duration:
+            duration_m = duration // 60000
+            duration_s = ceil(duration / 1000) - duration_m * 60
+            embed.add_field(name=f"{i} - {track['title']} - {duration_m}:{duration_s:02d}", value="", inline=False)
     return embed
 
 class PlayLikesButton(Button, VoiceExtension):
@@ -82,7 +83,7 @@ class PlayLikesButton(Button, VoiceExtension):
             track = playlist.pop(0)
             self.db.modify_track(gid, playlist, 'next', 'extend')
             await self.play_track(interaction, track)
-            response_message = f"Сейчас играет плейлист **«Мне нравится»**!"
+            response_message = f"Сейчас играет плейлист **{track.title}**!"
 
         if guild['current_player'] is not None and interaction.message:
             await interaction.message.delete()
