@@ -151,7 +151,7 @@ class Voice(Cog, VoiceExtension):
         embed = None
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
-            await ctx.respond("Вы не единственный в голосовом канале.", ephemeral=True)
+            await ctx.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
             return
 
         if guild['current_track']:
@@ -159,8 +159,8 @@ class Voice(Cog, VoiceExtension):
                 Track.de_json(
                     guild['current_track'],
                     client=ClientAsync()  # type: ignore  # Async client can be used here.
-                    )
                 )
+            )
             vc = await self.get_voice_client(ctx)
             if vc and vc.is_paused():
                 embed.set_footer(text='Приостановлено')

@@ -7,8 +7,9 @@ from discord.ext.commands import Cog
 import yandex_music
 import yandex_music.exceptions
 from yandex_music import ClientAsync as YMClient
+from yandex_music import Track, Album, Artist, Playlist
 
-from MusicBot.database import BaseUsersDatabase
+from MusicBot.database import BaseUsersDatabase, BaseGuildsDatabase
 from MusicBot.cogs.utils.find import (
     process_album, process_track, process_artist, process_playlist,
     ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist
@@ -22,7 +23,8 @@ class General(Cog):
     
     def __init__(self, bot):
         self.bot = bot
-        self.db = BaseUsersDatabase()
+        self.db = BaseGuildsDatabase()
+        self.users_db = BaseUsersDatabase()
     
     account = discord.SlashCommandGroup("account", "Команды, связанные с аккаунтом.")
     
@@ -84,7 +86,7 @@ class General(Cog):
                                 "или имеете разрешение управления каналом.\n```/queue clear```\n")
         elif command == 'settings':
             embed.description += ("Получить текущие настройки.\n```/settings show```\n"
-                                  "Разрешить или запретить воспроизведение Explicit треков.\n```/settings explicit```\n"
+                                  "Разрешить или запретить воспроизведение Explicit треков и альбомов. Если автор или плейлист содержат Explicit треки, убираются кнопки для доступа к ним.\n```/settings explicit```\n"
                                   "Разрешить или запретить создание меню проигрывателя, даже если в канале больше одного человека.\n```/settings menu```\n"
                                   "Разрешить или запретить голосование.\n```/settings vote <тип голосования>```\n"
                                   "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки.")
@@ -115,17 +117,17 @@ class General(Cog):
         about = cast(yandex_music.Status, client.me).to_dict()
         uid = ctx.author.id
 
-        self.db.update(uid, {'ym_token': token})
+        self.users_db.update(uid, {'ym_token': token})
         await ctx.respond(f'Привет, {about['account']['first_name']}!', delete_after=15, ephemeral=True)
     
     @account.command(description="Удалить токен из датабазы бота.")
     async def remove(self, ctx: discord.ApplicationContext) -> None:
-        self.db.update(ctx.user.id, {'ym_token': None})
+        self.users_db.update(ctx.user.id, {'ym_token': None})
         await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 
     @account.command(description="Получить плейлист «Мне нравится»")
     async def likes(self, ctx: discord.ApplicationContext) -> None:
-        token = self.db.get_ym_token(ctx.user.id)
+        token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
             await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
             return
@@ -145,7 +147,7 @@ class General(Cog):
     
     @account.command(description="Получить ваши плейлисты.")
     async def playlists(self, ctx: discord.ApplicationContext) -> None:
-        token = self.db.get_ym_token(ctx.user.id)
+        token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
             await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
             return
@@ -157,7 +159,7 @@ class General(Cog):
         playlists: list[tuple[str, int]] = [
             (playlist.title if playlist.title else 'Без названия', playlist.track_count if playlist.track_count else 0) for playlist in playlists_list
         ]
-        self.db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
+        self.users_db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
         embed = generate_playlist_embed(0, playlists)
         await ctx.respond(embed=embed, view=MyPlalists(ctx), ephemeral=True)
     
@@ -184,55 +186,86 @@ class General(Cog):
             await ctx.respond("❌ Недопустимый тип.", delete_after=15, ephemeral=True)
             return
         
-        token = self.db.get_ym_token(ctx.user.id)
+        guild = self.db.get_guild(ctx.guild_id)
+        token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
-            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью комманды /login.", delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью команды /login.", delete_after=15, ephemeral=True)
             return
+
         try:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
             await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
             return
-        
+
         if content_type == 'User Playlist':
             if not client.me or not client.me.account or not client.me.account.uid:
                 await ctx.respond("❌ Не удалось получить информацию о пользователе.", delete_after=15, ephemeral=True)
                 return
+
             playlists = await client.users_playlists_list(client.me.account.uid)
-            result = None
-            for playlist in playlists:
-                if playlist.title == name:
-                    result = playlist
-                    break
-            else:
+            result = next((playlist for playlist in playlists if playlist.title == name), None)
+            if not result:
                 await ctx.respond("❌ Плейлист не найден.", delete_after=15, ephemeral=True)
                 return
+            
+            tracks = await result.fetch_tracks_async()
+            if not tracks:
+                await ctx.respond("❌ Плейлист пуст.", delete_after=15, ephemeral=True)
+                return
+            
+            for track_short in tracks:
+                track = cast(Track, track_short.track)
+                if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                    await ctx.respond("❌ Explicit контент запрещён на этом сервере.", delete_after=15, ephemeral=True)
+                    return
             
             embed = await process_playlist(result)
             await ctx.respond(embed=embed, view=ListenPlaylist(result))
         else:
-            result = await client.search(name, True, content_type.lower())
+            result = await client.search(name, True)
         
             if not result:
                 await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже", delete_after=15, ephemeral=True)
                 return
 
-            if content_type == 'Album' and result.albums:
-                album = result.albums.results[0]
-                embed = await process_album(album)
-                await ctx.respond(embed=embed, view=ListenAlbum(album))
-            elif content_type == 'Track' and result.tracks:
-                track = result.tracks.results[0]
-                album_id = cast(int, track.albums[0].id)
-                embed = await process_track(track)
-                await ctx.respond(embed=embed, view=ListenTrack(track, album_id))
-            elif content_type == 'Artist' and result.artists:
-                artist = result.artists.results[0]
-                embed = await process_artist(artist)
-                await ctx.respond(embed=embed, view=ListenArtist(artist))
-            elif content_type == 'Playlist' and result.playlists:
-                playlist = result.playlists.results[0]
-                embed = await process_playlist(playlist)
-                await ctx.respond(embed=embed, view=ListenPlaylist(playlist))
+            content_map = {
+                'Album': (result.albums, process_album, ListenAlbum),
+                'Track': (result.tracks, process_track, ListenTrack),
+                'Artist': (result.artists, process_artist, ListenArtist),
+                'Playlist': (result.playlists, process_playlist, ListenPlaylist)
+            }
+
+            if content_type in content_map:
+                content: Album | Track | Artist | Playlist = content_map[content_type][0].results[0]
+                embed: discord.Embed = await content_map[content_type][1](content)
+                view = content_map[content_type][2](content)
+                
+                if isinstance(content, (Track, Album)) and (content.explicit or content.content_warning) and not guild['allow_explicit']:
+                    await ctx.respond("❌ Explicit контент запрещён на этом сервере.", delete_after=15, ephemeral=True)
+                    return
+                elif isinstance(content, Artist):
+                    tracks = await content.get_tracks_async()
+                    if not tracks:
+                        await ctx.respond("❌ Треки от этого исполнителя не найдены.", delete_after=15, ephemeral=True)
+                        return
+                    for track in tracks:
+                        if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                            view = None
+                            embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
+                            break
+                elif isinstance(content, Playlist):
+                    tracks = await content.fetch_tracks_async()
+                    if not tracks:
+                        await ctx.respond("❌ Треки в этом плейлисте не найдены.", delete_after=15, ephemeral=True)
+                        return
+                    for track_short in content.tracks:
+                        track = cast(Track, track_short.track)
+                        if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                            view = None
+                            embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
+                            break
+                
+                await ctx.respond(embed=embed, view=view)
             else:
                 await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)

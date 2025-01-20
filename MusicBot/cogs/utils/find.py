@@ -138,11 +138,11 @@ class PlayPlaylistButton(Button, VoiceExtension):
         await interaction.respond(response_message, delete_after=15)
 
 class ListenTrack(View):
-    
-    def __init__(self, track: Track, album_id: int, *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
+
+    def __init__(self, track: Track, *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        link_app = f"yandexmusic://album/{album_id}/track/{track.id}"
-        link_web = f"https://music.yandex.ru/album/{album_id}/track/{track.id}"
+        link_app = f"yandexmusic://album/{track.albums[0].id}/track/{track.id}"
+        link_web = f"https://music.yandex.ru/album/{track.albums[0].id}/track/{track.id}"
         self.button1: Button = Button(label="Слушать в приложении", style=ButtonStyle.gray, url=link_app)
         self.button2: Button = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         self.button3: PlayTrackButton = PlayTrackButton(track, label="Слушать в голосовом канале", style=ButtonStyle.gray)
@@ -152,7 +152,7 @@ class ListenTrack(View):
             self.add_item(self.button3)
     
 class ListenAlbum(View):
-    
+
     def __init__(self, album: Album, *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://album/{album.id}"
@@ -166,7 +166,7 @@ class ListenAlbum(View):
             self.add_item(self.button3)
 
 class ListenArtist(View):
-    
+
     def __init__(self, artist: Artist, *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://artist/{artist.id}"
@@ -180,6 +180,7 @@ class ListenArtist(View):
             self.add_item(self.button3)
 
 class ListenPlaylist(View):
+
     def __init__(self, playlist: Playlist, *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         link_app = f"yandexmusic://playlist/{playlist.playlist_uuid}"
