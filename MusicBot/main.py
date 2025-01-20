@@ -16,7 +16,8 @@ bot = Bot(intents=intents)
 
 cogs_list = [
     'general',
-    'voice'
+    'voice',
+    'settings'
 ]
 
 @bot.event

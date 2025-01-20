@@ -8,7 +8,12 @@ class Guild(TypedDict, total=False):
     is_stopped: bool
     allow_explicit: bool
     always_allow_menu: bool
-    disable_vote: bool
+    vote_add: bool
+    vote_next_track: bool
+    vote_add_track: bool
+    vote_add_album: bool
+    vote_add_artist: bool
+    vote_add_playlist: bool
     shuffle: bool
     repeat: bool
 
@@ -21,6 +26,11 @@ class ExplicitGuild(TypedDict):
     is_stopped: bool  # Prevents the `after` callback of play_track
     allow_explicit: bool
     always_allow_menu: bool
-    disable_vote: bool
+    vote_add: bool
+    vote_next_track: bool
+    vote_add_track: bool
+    vote_add_album: bool
+    vote_add_artist: bool
+    vote_add_playlist: bool
     shuffle: bool
     repeat: bool

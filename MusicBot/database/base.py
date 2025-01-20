@@ -52,7 +52,20 @@ class BaseUsersDatabase:
         if not user:
             self.create_record(uid)
             user = users.find_one({'_id': uid})
-        return cast(ExplicitUser, user)
+        user =  cast(ExplicitUser, user)
+        existing_fields = user.keys()
+        fields: User = User(
+            ym_token=None,
+            playlists=[],
+            playlists_page=0,
+            queue_page=0
+        )
+        for field, default_value in fields.items():
+            if field not in existing_fields and field != '_id':
+                user[field] = default_value
+                users.update_one({'_id': uid}, {"$set": {field: default_value}})
+        
+        return user
 
     def get_ym_token(self, uid: int) -> str | None:
         user = users.find_one({'_id': uid})
@@ -78,7 +91,12 @@ class BaseGuildsDatabase:
             is_stopped=True,
             allow_explicit=True,
             always_allow_menu=False,
-            disable_vote=False,
+            vote_add=True,
+            vote_next_track=True,
+            vote_add_track=True,
+            vote_add_album=True,
+            vote_add_artist=True,
+            vote_add_playlist=True,
             shuffle=False,
             repeat=False
         ))
@@ -106,4 +124,30 @@ class BaseGuildsDatabase:
         if not guild:
             self.create_record(gid)
             guild = guilds.find_one({'_id': gid})
-        return cast(ExplicitGuild, guild)
+        
+        guild = cast(ExplicitGuild, guild)
+        existing_fields = guild.keys()
+        fields = Guild(
+            next_tracks=[],
+            previous_tracks=[],
+            current_track=None,
+            current_player=None,
+            is_stopped=True,
+            allow_explicit=True,
+            always_allow_menu=False,
+            vote_add=True,
+            vote_next_track=True,
+            vote_add_track=True,
+            vote_add_album=True,
+            vote_add_artist=True,
+            vote_add_playlist=True,
+            shuffle=False,
+            repeat=False
+        )
+        for field, default_value in fields.items():
+            if field not in existing_fields and field != '_id':
+                guild[field] = default_value
+                guilds.update_one({'_id': gid}, {"$set": {field: default_value}})
+        
+        return guild
+        
