@@ -23,18 +23,37 @@ class PlayTrackButton(Button, VoiceExtension):
 
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
-
-        if guild['current_track']:
-            self.db.modify_track(gid, self.track, 'next', 'append')
-            response_message = f"Трек **{self.track.title}** был добавлен в очередь."
+        channel = cast(discord.VoiceChannel, interaction.channel)
+        member = cast(discord.Member, interaction.user)
+        
+        if guild['vote_add_track'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            message = cast(discord.Interaction, await interaction.respond(f"{member.mention} хочет добавить трек **{self.track.title}** в очередь.\n\n Голосуйте за добавление.", delete_after=30))
+            response = await message.original_response()
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            self.db.update_vote(
+                gid,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'add_track',
+                    'vote_content': self.track.to_dict()
+                }
+            )
         else:
-            await self.play_track(interaction, self.track)
-            response_message = f"Сейчас играет: **{self.track.title}**!"
+            if guild['current_track']:
+                self.db.modify_track(gid, self.track, 'next', 'append')
+                response_message = f"Трек **{self.track.title}** был добавлен в очередь."
+            else:
+                await self.play_track(interaction, self.track)
+                response_message = f"Сейчас играет: **{self.track.title}**!"
 
-        if guild['current_player'] is not None and interaction.message:
-            await interaction.message.delete()
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
 
-        await interaction.respond(response_message, delete_after=15)
+            await interaction.respond(response_message, delete_after=15)
 
 class PlayAlbumButton(Button, VoiceExtension):
     
@@ -53,22 +72,41 @@ class PlayAlbumButton(Button, VoiceExtension):
 
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
+        channel = cast(discord.VoiceChannel, interaction.channel)
+        member = cast(discord.Member, interaction.user)
 
         tracks: list[Track] = [track for volume in album.volumes for track in volume]
 
-        if guild['current_track'] is not None:
-            self.db.modify_track(gid, tracks, 'next', 'extend')
-            response_message = f"Альбом **{album.title}** был добавлен в очередь."
+        if guild['vote_add_album'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            message = cast(discord.Interaction, await interaction.respond(f"{member.mention} хочет добавить альбом **{self.album.title}** в очередь.\n\n Голосуйте за добавление.", delete_after=30))
+            response = await message.original_response()
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            self.db.update_vote(
+                gid,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'add_album',
+                    'vote_content': [track.to_dict() for track in tracks]
+                }
+            )
         else:
-            track = tracks.pop(0)
-            self.db.modify_track(gid, tracks, 'next', 'extend')
-            await self.play_track(interaction, track)
-            response_message = f"Сейчас играет: **{track.title}**!"
+            if guild['current_track'] is not None:
+                self.db.modify_track(gid, tracks, 'next', 'extend')
+                response_message = f"Альбом **{album.title}** был добавлен в очередь."
+            else:
+                track = tracks.pop(0)
+                self.db.modify_track(gid, tracks, 'next', 'extend')
+                await self.play_track(interaction, track)
+                response_message = f"Сейчас играет: **{track.title}**!"
 
-        if guild['current_player'] is not None and interaction.message:
-            await interaction.message.delete()
-        else:
-            await interaction.respond(response_message, delete_after=15)
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
+            else:
+                await interaction.respond(response_message, delete_after=15)
 
 class PlayArtistButton(Button, VoiceExtension):
     def __init__(self, artist: Artist, **kwargs):
@@ -86,24 +124,44 @@ class PlayArtistButton(Button, VoiceExtension):
 
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
+        channel = cast(discord.VoiceChannel, interaction.channel)
+        member = cast(discord.Member, interaction.user)
 
         tracks: list[Track] = artist_tracks.tracks.copy()
 
-        if guild['current_track'] is not None:
-            self.db.modify_track(gid, tracks, 'next', 'extend')
-            response_message = f"Песни артиста **{self.artist.name}** были добавлены в очередь."
+        if guild['vote_add_artist'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            message = cast(discord.Interaction, await interaction.respond(f"{member.mention} хочет добавить треки от **{self.artist.name}** в очередь.\n\n Голосуйте за добавление.", delete_after=30))
+            response = await message.original_response()
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            self.db.update_vote(
+                gid,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'add_album',
+                    'vote_content': [track.to_dict() for track in tracks]
+                }
+            )
         else:
-            track = tracks.pop(0)
-            self.db.modify_track(gid, tracks, 'next', 'extend')
-            await self.play_track(interaction, track)
-            response_message = f"Сейчас играет: **{track.title}**!"
+            if guild['current_track'] is not None:
+                self.db.modify_track(gid, tracks, 'next', 'extend')
+                response_message = f"Песни артиста **{self.artist.name}** были добавлены в очередь."
+            else:
+                track = tracks.pop(0)
+                self.db.modify_track(gid, tracks, 'next', 'extend')
+                await self.play_track(interaction, track)
+                response_message = f"Сейчас играет: **{track.title}**!"
 
-        if guild['current_player'] is not None and interaction.message:
-            await interaction.message.delete()
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
 
-        await interaction.respond(response_message, delete_after=15)
+            await interaction.respond(response_message, delete_after=15)
 
 class PlayPlaylistButton(Button, VoiceExtension):
+
     def __init__(self, playlist: Playlist, **kwargs):
         Button.__init__(self, **kwargs)
         VoiceExtension.__init__(self, None)
@@ -120,22 +178,93 @@ class PlayPlaylistButton(Button, VoiceExtension):
 
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
+        channel = cast(discord.VoiceChannel, interaction.channel)
+        member = cast(discord.Member, interaction.user)
 
         tracks: list[Track] = [cast(Track, short_track.track) for short_track in short_tracks]
 
-        if guild['current_track'] is not None:
-            self.db.modify_track(gid, tracks, 'next', 'extend')
-            response_message = f"Плейлист **{self.playlist.title}** был добавлен в очередь."
+        if guild['vote_add_playlist'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            message = cast(discord.Interaction, await interaction.respond(f"{member.mention} хочет добавить плейлист **{self.playlist.title}** в очередь.\n\n Голосуйте за добавление.", delete_after=30))
+            response = await message.original_response()
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            self.db.update_vote(
+                gid,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'add_playlist',
+                    'vote_content': [track.to_dict() for track in tracks]
+                }
+            )
         else:
-            track = tracks.pop(0)
-            self.db.modify_track(gid, tracks, 'next', 'extend')
-            await self.play_track(interaction, track)
-            response_message = f"Сейчас играет: **{self.playlist.title}**!"
+            if guild['current_track'] is not None:
+                self.db.modify_track(gid, tracks, 'next', 'extend')
+                response_message = f"Плейлист **{self.playlist.title}** был добавлен в очередь."
+            else:
+                track = tracks.pop(0)
+                self.db.modify_track(gid, tracks, 'next', 'extend')
+                await self.play_track(interaction, track)
+                response_message = f"Сейчас играет: **{self.playlist.title}**!"
 
-        if guild['current_player'] is not None and interaction.message:
-            await interaction.message.delete()
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
 
-        await interaction.respond(response_message, delete_after=15)
+            await interaction.respond(response_message, delete_after=15)
+
+class PlayLikesButton(Button, VoiceExtension):
+    def __init__(self, playlist: list[Track], **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self, None)
+        self.playlist = playlist
+    
+    async def callback(self, interaction: Interaction):
+        if not interaction.guild or not await self.voice_check(interaction):
+            return
+
+        playlist = self.playlist.copy()
+        gid = interaction.guild.id
+        guild = self.db.get_guild(gid)
+        channel = cast(discord.VoiceChannel, interaction.channel)
+        member = cast(discord.Member, interaction.user)
+
+        if guild['vote_add_playlist'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            message = cast(discord.Interaction, await interaction.respond(f"{member.mention} хочет добавить плейлист **«Мне нравится»** в очередь.\n\n Голосуйте за добавление.", delete_after=30))
+            response = await message.original_response()
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            self.db.update_vote(
+                gid,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'add_playlist',
+                    'vote_content': [track.to_dict() for track in playlist]
+                }
+            )
+        else:
+            if guild['current_track'] is not None:
+                self.db.modify_track(gid, playlist, 'next', 'extend')
+                response_message = f"Плейлист **«Мне нравится»** был добавлен в очередь."
+            else:
+                track = playlist.pop(0)
+                self.db.modify_track(gid, playlist, 'next', 'extend')
+                await self.play_track(interaction, track)
+                response_message = f"Сейчас играет: **{track.title}**!"
+
+            if guild['current_player'] is not None and interaction.message:
+                await interaction.message.delete()
+
+            await interaction.respond(response_message, delete_after=15)
+
+class ListenLikesPlaylist(View):
+    def __init__(self, playlist: list[Track], *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
+        super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
+        self.add_item(PlayLikesButton(playlist, label="Слушать в голосовом канале", style=ButtonStyle.gray))
 
 class ListenTrack(View):
 

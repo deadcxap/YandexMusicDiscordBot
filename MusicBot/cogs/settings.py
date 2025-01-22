@@ -23,7 +23,7 @@ class Settings(Cog):
         embed = discord.Embed(title="Настройки бота", color=0xfed42b)
         
         explicit = "✅ - Разрешены" if guild['allow_explicit'] else "❌ - Запрещены"
-        menu = "✅ - Всегда доступно" if guild['always_allow_menu'] else "❌ - Если в канале 1 пользователь."
+        menu = "✅ - Всегда доступно" if guild['always_allow_menu'] else "❌ - Если в канале 1 человек."
         
         vote = "✅ - Переключение" if guild['vote_next_track'] else "❌ - Переключение"
         vote += "\n✅ - Добавление треков" if guild['vote_add_track'] else "\n❌ - Добавление треков"
@@ -32,7 +32,7 @@ class Settings(Cog):
         vote += "\n✅ - Добавление плейлистов" if guild['vote_add_playlist'] else "\n❌ - Добавление плейлистов"
         
         embed.add_field(name="__Explicit треки__", value=explicit, inline=False)
-        embed.add_field(name="__Проигрыватель__", value=menu, inline=False)
+        embed.add_field(name="__Меню проигрывателя__", value=menu, inline=False)
         embed.add_field(name="__Голосование__", value=vote, inline=False)
         
         await ctx.respond(embed=embed, ephemeral=True)
@@ -64,8 +64,8 @@ class Settings(Cog):
         "vote_type",
         description="Тип голосования.",
         type=discord.SlashCommandOptionType.string,
-        choices=['+Всё', '-Всё', 'Переключение', '+Трек', '+Альбом', '+Плейлист'],
-        default='Всё'
+        choices=['+Всё', '-Всё', 'Переключение', 'Трек', 'Альбом', 'Плейлист'],
+        default='+Всё'
     )
     async def vote(self, ctx: discord.ApplicationContext, vote_type: Literal['+Всё', '-Всё', 'Переключение', 'Трек', 'Альбом', 'Плейлист']) -> None:
         member = cast(discord.Member, ctx.author)
@@ -97,18 +97,18 @@ class Settings(Cog):
             response_message = "Голосование включено."
         elif vote_type == 'Переключение':
             self.db.update(ctx.guild.id, {'vote_next_track': not guild['vote_next_track']})
-            response_message = "Голосование за переключение трека " + ("включено." if guild['vote_next_track'] else "выключено.")
+            response_message = "Голосование за переключение трека " + ("выключено." if guild['vote_next_track'] else "включено.")
         elif vote_type == 'Трек':
             self.db.update(ctx.guild.id, {'vote_add_track': not guild['vote_add_track']})
-            response_message = "Голосование за добавление трека " + ("включено." if guild['vote_add_track'] else "выключено.")
+            response_message = "Голосование за добавление трека " + ("выключено." if guild['vote_add_track'] else "включено.")
         elif vote_type == 'Альбом':
             self.db.update(ctx.guild.id, {'vote_add_album': not guild['vote_add_album']})
-            response_message = "Голосование за добавление альбома " + ("включено." if guild['vote_add_album'] else "выключено.")
+            response_message = "Голосование за добавление альбома " + ("выключено." if guild['vote_add_album'] else "включено.")
         elif vote_type == 'Артист':
             self.db.update(ctx.guild.id, {'vote_add_artist': not guild['vote_add_artist']})
-            response_message = "Голосование за добавление артиста " + ("включено." if guild['vote_add_artist'] else "выключено.")
+            response_message = "Голосование за добавление артиста " + ("выключено." if guild['vote_add_artist'] else "включено.")
         elif vote_type == 'Плейлист':
             self.db.update(ctx.guild.id, {'vote_add_playlist': not guild['vote_add_playlist']})
-            response_message = "Голосование за добавление плейлиста " + ("включено." if guild['vote_add_playlist'] else "выключено.")
+            response_message = "Голосование за добавление плейлиста " + ("выключено." if guild['vote_add_playlist'] else "включено.")
         
         await ctx.respond(response_message, delete_after=15, ephemeral=True)

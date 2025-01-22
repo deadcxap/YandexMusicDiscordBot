@@ -12,9 +12,9 @@ from yandex_music import Track, Album, Artist, Playlist
 from MusicBot.database import BaseUsersDatabase, BaseGuildsDatabase
 from MusicBot.cogs.utils.find import (
     process_album, process_track, process_artist, process_playlist,
-    ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist
+    ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist, ListenLikesPlaylist
 )
-from MusicBot.cogs.utils.misc import MyPlalists, ListenLikesPlaylist, generate_playlist_embed, generate_likes_embed
+from MusicBot.cogs.utils.misc import MyPlaylists, generate_playlist_embed, generate_likes_embed
 
 def setup(bot):
     bot.add_cog(General(bot))
@@ -161,7 +161,7 @@ class General(Cog):
         ]
         self.users_db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
         embed = generate_playlist_embed(0, playlists)
-        await ctx.respond(embed=embed, view=MyPlalists(ctx), ephemeral=True)
+        await ctx.respond(embed=embed, view=MyPlaylists(ctx), ephemeral=True)
     
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(

@@ -1,4 +1,4 @@
-from typing import cast, TypedDict, Literal
+from typing import cast
 
 import discord
 from discord.ext.commands import Cog
@@ -21,32 +21,26 @@ class Voice(Cog, VoiceExtension):
     def __init__(self, bot: discord.Bot):
         VoiceExtension.__init__(self, bot)
         self.bot = bot
-        MessageVotes = TypedDict('MessageVotes', {'positive_votes': set[int], 'negative_votes': set[int], 'total_members': int, 'action': Literal['next']})
-        self.vote_messages: dict[int, dict[int, MessageVotes]] = {}
 
     @Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
         gid = member.guild.id
         guild = self.db.get_guild(gid)
 
-        if after.channel:
-            channel = cast(discord.VoiceChannel, after.channel)
-        else:
-            channel = cast(discord.VoiceChannel, before.channel)
-
+        channel = after.channel or before.channel
         if not channel:
             return
 
         discord_guild = await self.bot.fetch_guild(gid)
-        vc = cast((discord.VoiceClient | None), discord.utils.get(self.bot.voice_clients, guild=discord_guild))
+        vc = cast(discord.VoiceClient | None, discord.utils.get(self.bot.voice_clients, guild=discord_guild))
 
         if len(channel.members) == 1 and vc:
             self.db.clear_history(gid)
             self.db.update(gid, {'current_track': None, 'is_stopped': True})
             vc.stop()
-        if len(channel.members) > 2 and not guild['always_allow_menu']:
+        elif len(channel.members) > 2 and not guild['always_allow_menu']:
             current_player = self.db.get_current_player(gid)
-            if current_player is not None:
+            if current_player:
                 self.db.update(gid, {'current_player': None, 'repeat': False, 'shuffle': False})
                 try:
                     message = await channel.fetch_message(current_player)
@@ -78,42 +72,58 @@ class Voice(Cog, VoiceExtension):
             return
         
         guild_id = payload.guild_id
-        if guild_id not in self.vote_messages:
+        if not guild_id:
             return
+        guild = self.db.get_guild(guild_id)
+        votes = guild['votes']
 
-        if payload.message_id not in self.vote_messages[guild_id]:
-            return
-
-        vote_data = self.vote_messages[guild_id][payload.message_id]
+        vote_data = votes[str(payload.message_id)]
         if payload.emoji.name == '✅':
-            vote_data['positive_votes'].add(payload.user_id)
+            vote_data['positive_votes'].append(payload.user_id)
         elif payload.emoji.name == '❌':
-            vote_data['negative_votes'].add(payload.user_id)
+            vote_data['negative_votes'].append(payload.user_id)
 
         total_members = len(channel.members)
-        if total_members <= 5:
-            required_votes = 2
-        elif total_members <= 10:
-            required_votes = 4
-        elif total_members <= 15:
-            required_votes = 6
-        else:
-            required_votes = 9
-        
+        required_votes = 2 if total_members <= 5 else 4 if total_members <= 10 else 6 if total_members <= 15 else 9
         if len(vote_data['positive_votes']) >= required_votes:
             if vote_data['action'] == 'next':
                 self.db.update(guild_id, {'is_stopped': False})
                 title = await self.next_track(payload)
                 await message.clear_reactions()
-                if title is not None:
+                await message.edit(content=f"Сейчас играет: **{title}**!", delete_after=15)
+                del votes[str(payload.message_id)]
+            elif vote_data['action'] == 'add_track':
+                await message.clear_reactions()
+                track = vote_data['vote_content']
+                if not track:
+                    return
+                self.db.update(guild_id, {'is_stopped': False})
+                self.db.modify_track(guild_id, track, 'next', 'append')
+                if guild['current_track']:
+                    await message.edit(content=f"Трек был добавлен в очередь!", delete_after=15)
+                else:
+                    title = await self.next_track(payload)
                     await message.edit(content=f"Сейчас играет: **{title}**!", delete_after=15)
-                del self.vote_messages[guild_id][payload.message_id]
+                del votes[str(payload.message_id)]
+            elif vote_data['action'] in ('add_album', 'add_artist', 'add_playlist'):
+                tracks = vote_data['vote_content']
+                await message.clear_reactions()
+                if not tracks:
+                    return
+                self.db.update(guild_id, {'is_stopped': False})
+                self.db.modify_track(guild_id, tracks, 'next', 'extend')
+                if guild['current_track']:
+                    await message.edit(content=f"Контент был добавлен в очередь!", delete_after=15)
+                else:
+                    title = await self.next_track(payload)
+                    await message.edit(content=f"Сейчас играет: **{title}**!", delete_after=15)
+                del votes[str(payload.message_id)]
         elif len(vote_data['negative_votes']) >= required_votes:
-            channel = cast(discord.VoiceChannel, self.bot.get_channel(payload.channel_id))
-            message = await channel.fetch_message(payload.message_id)
             await message.clear_reactions()
             await message.edit(content='Запрос был отклонён.', delete_after=15)
-            del self.vote_messages[guild_id][payload.message_id]
+            del votes[str(payload.message_id)]
+        
+        self.db.update(guild_id, {'votes': votes})
 
     @Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
@@ -121,11 +131,10 @@ class Voice(Cog, VoiceExtension):
             return
         
         guild_id = payload.guild_id
-        if guild_id not in self.vote_messages:
+        if not guild_id:
             return
-
-        if payload.message_id not in self.vote_messages[guild_id]:
-            return
+        guild = self.db.get_guild(guild_id)
+        votes = guild['votes']
 
         channel = cast(discord.VoiceChannel, self.bot.get_channel(payload.channel_id))
         if not channel:
@@ -135,11 +144,13 @@ class Voice(Cog, VoiceExtension):
         if not message or message.author.id != self.bot.user.id:
             return
 
-        vote_data = self.vote_messages[guild_id][payload.message_id]
+        vote_data = votes[str(payload.message_id)]
         if payload.emoji.name == '✔️':
-            vote_data['positive_votes'].discard(payload.user_id)
+            del vote_data['positive_votes'][payload.user_id]
         elif payload.emoji.name == '❌':
-            vote_data['negative_votes'].discard(payload.user_id)
+            del vote_data['negative_votes'][payload.user_id]
+        
+        self.db.update(guild_id, {'votes': votes})
     
     @voice.command(name="menu", description="Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
@@ -280,33 +291,33 @@ class Voice(Cog, VoiceExtension):
         if not await self.voice_check(ctx):
             return
         gid = ctx.guild.id
-        tracks_list = self.db.get_tracks_list(gid, 'next')
-        if not tracks_list:
+        guild = self.db.get_guild(gid)
+        if not guild['next_tracks']:
             await ctx.respond("❌ Нет песенен в очереди.", delete_after=15, ephemeral=True)
             return
 
         member = cast(discord.Member, ctx.author)
         channel = cast(discord.VoiceChannel, ctx.channel)
-        if self.db.get_track(gid, 'current') and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
-            message = cast(discord.Interaction, await ctx.respond(f"{ctx.user.mention} хочет пропустить текущий трек.\n\nВыполнить переход?", delete_after=30))
+        if guild['vote_next_track'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            message = cast(discord.Interaction, await ctx.respond(f"{member.mention} хочет пропустить текущий трек.\n\nВыполнить переход?", delete_after=30))
             response = await message.original_response()
             await response.add_reaction('✅')
             await response.add_reaction('❌')
-            self.vote_messages[ctx.guild.id] = {
-                response.id: {
-                    'positive_votes': set(),
-                    'negative_votes': set(),
+            self.db.update_vote(
+                gid,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
                     'total_members': len(channel.members),
-                    'action': 'next'
+                    'action': 'next',
+                    'vote_content': None
                 }
-            }
+            )
         else:
             self.db.update(gid, {'is_stopped': False})
             title = await self.next_track(ctx)
-            if title is not None:
-                await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
-            else:
-                await ctx.respond(f"Нет треков в очереди.", delete_after=15, ephemeral=True)
+            await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
 
     @track.command(description="Добавить трек в избранное или убрать, если он уже там.")
     async def like(self, ctx: discord.ApplicationContext) -> None:

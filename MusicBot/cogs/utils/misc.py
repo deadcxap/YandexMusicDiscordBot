@@ -62,39 +62,6 @@ def generate_queue_embed(page: int, tracks_list: list[dict[str, Any]]) -> Embed:
             embed.add_field(name=f"{i} - {track['title']} - {duration_m}:{duration_s:02d}", value="", inline=False)
     return embed
 
-class PlayLikesButton(Button, VoiceExtension):
-    def __init__(self, playlist: list[Track], **kwargs):
-        Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self, None)
-        self.playlist = playlist
-    
-    async def callback(self, interaction: Interaction):
-        if not interaction.guild or not await self.voice_check(interaction):
-            return
-
-        playlist = self.playlist.copy()
-        gid = interaction.guild.id
-        guild = self.db.get_guild(gid)
-
-        if guild['current_track'] is not None:
-            self.db.modify_track(gid, playlist, 'next', 'extend')
-            response_message = f"Плейлист **«Мне нравится»** был добавлен в очередь."
-        else:
-            track = playlist.pop(0)
-            self.db.modify_track(gid, playlist, 'next', 'extend')
-            await self.play_track(interaction, track)
-            response_message = f"Сейчас играет плейлист **{track.title}**!"
-
-        if guild['current_player'] is not None and interaction.message:
-            await interaction.message.delete()
-
-        await interaction.respond(response_message, delete_after=15)
-
-class ListenLikesPlaylist(View):
-    def __init__(self, playlist: list[Track], *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
-        super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        self.add_item(PlayLikesButton(playlist, label="Слушать в голосовом канале", style=ButtonStyle.gray))
-
 class MPNextButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
@@ -107,7 +74,7 @@ class MPNextButton(Button, VoiceExtension):
         page = user['playlists_page'] + 1
         self.users_db.update(interaction.user.id, {'playlists_page': page})
         embed = generate_playlist_embed(page, user['playlists'])
-        await interaction.edit(embed=embed, view=MyPlalists(interaction))
+        await interaction.edit(embed=embed, view=MyPlaylists(interaction))
 
 class MPPrevButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -121,9 +88,9 @@ class MPPrevButton(Button, VoiceExtension):
         page = user['playlists_page'] - 1
         self.users_db.update(interaction.user.id, {'playlists_page': page})
         embed = generate_playlist_embed(page, user['playlists'])
-        await interaction.edit(embed=embed, view=MyPlalists(interaction))
+        await interaction.edit(embed=embed, view=MyPlaylists(interaction))
 
-class MyPlalists(View, VoiceExtension):
+class MyPlaylists(View, VoiceExtension):
     def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)

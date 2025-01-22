@@ -5,8 +5,8 @@ from typing import cast
 from pymongo import MongoClient
 from pymongo.collection import Collection
 
-from MusicBot.database.user import User, ExplicitUser
-from MusicBot.database.guild import Guild, ExplicitGuild
+from .user import User, ExplicitUser
+from .guild import Guild, ExplicitGuild, MessageVotes
 
 client: MongoClient = MongoClient("mongodb://localhost:27017/")
 users: Collection[ExplicitUser] = client.YandexMusicBot.users
@@ -91,14 +91,14 @@ class BaseGuildsDatabase:
             is_stopped=True,
             allow_explicit=True,
             always_allow_menu=False,
-            vote_add=True,
             vote_next_track=True,
             vote_add_track=True,
             vote_add_album=True,
             vote_add_artist=True,
             vote_add_playlist=True,
             shuffle=False,
-            repeat=False
+            repeat=False,
+            votes={}
         ))
 
     def update(self, gid: int, data: Guild) -> None:
@@ -135,14 +135,14 @@ class BaseGuildsDatabase:
             is_stopped=True,
             allow_explicit=True,
             always_allow_menu=False,
-            vote_add=True,
             vote_next_track=True,
             vote_add_track=True,
             vote_add_album=True,
             vote_add_artist=True,
             vote_add_playlist=True,
             shuffle=False,
-            repeat=False
+            repeat=False,
+            votes={}
         )
         for field, default_value in fields.items():
             if field not in existing_fields and field != '_id':
@@ -151,3 +151,14 @@ class BaseGuildsDatabase:
         
         return guild
         
+    def update_vote(self, gid: int, mid: int, data: MessageVotes) -> None:
+        """Update vote for a message in a guild.
+        
+        Args:
+            gid (int): Guild id.
+            mid (int): Message id.
+            vote (bool): Vote value.
+        """
+        guild = self.get_guild(gid)
+        guild['votes'][str(mid)] = data
+        guilds.update_one({'_id': gid}, {"$set": {'votes': guild['votes']}})
