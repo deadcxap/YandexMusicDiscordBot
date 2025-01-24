@@ -1,3 +1,4 @@
+import logging
 from discord.ui import View, Button, Item
 from discord import ButtonStyle, Interaction, ApplicationContext
 
@@ -9,6 +10,7 @@ class ToggleRepeatButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
+        logging.debug('Repeat button callback...')
         if not interaction.guild:
             return
         gid = interaction.guild.id
@@ -22,6 +24,7 @@ class ToggleShuffleButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
+        logging.debug('Shuffle button callback...')
         if not interaction.guild:
             return
         gid = interaction.guild.id
@@ -35,6 +38,7 @@ class PlayPauseButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
+        logging.debug('Play/Pause button callback...')
         if not await self.voice_check(interaction):
             return
 
@@ -59,6 +63,7 @@ class NextTrackButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
+        logging.debug('Next track button callback...')
         if not await self.voice_check(interaction):
             return
         title = await self.next_track(interaction)
@@ -71,6 +76,7 @@ class PrevTrackButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
+        logging.debug('Previous track button callback...')
         if not await self.voice_check(interaction):
             return
         title = await self.prev_track(interaction)
@@ -83,6 +89,7 @@ class LikeButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
         
     async def callback(self, interaction: Interaction) -> None:
+        logging.debug('Like button callback...')
         if await self.voice_check(interaction):
             vc = await self.get_voice_client(interaction)
             if not vc or not vc.is_playing:

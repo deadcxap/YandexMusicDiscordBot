@@ -1,11 +1,13 @@
+from typing import Any, cast
 from math import ceil
-from typing import Any
+from os import getenv
 
-from yandex_music import Track
-from discord.ui import View, Button, Item
-from discord import ButtonStyle, Interaction, ApplicationContext, Embed
+import aiohttp
+from io import BytesIO
+from PIL import Image
 
-from MusicBot.cogs.utils.voice_extension import VoiceExtension
+from yandex_music import Track, Album, Artist, Playlist, Label
+from discord import Embed
 
 def generate_likes_embed(tracks: list[Track]) -> Embed:
     track_count = len(tracks)
@@ -32,7 +34,7 @@ def generate_likes_embed(tracks: list[Track]) -> Embed:
 
     return embed
 
-def generate_playlist_embed(page: int, playlists: list[tuple[str, int]]) -> Embed:
+def generate_playlists_embed(page: int, playlists: list[tuple[str, int]]) -> Embed:
     count = 15 * page
     length = len(playlists)
     embed = Embed(
@@ -62,102 +64,277 @@ def generate_queue_embed(page: int, tracks_list: list[dict[str, Any]]) -> Embed:
             embed.add_field(name=f"{i} - {track['title']} - {duration_m}:{duration_s:02d}", value="", inline=False)
     return embed
 
-class MPNextButton(Button, VoiceExtension):
-    def __init__(self, **kwargs):
-        Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self, None)
+async def generate_track_embed(track: Track) -> Embed:
+    title = cast(str, track.title)
+    avail = cast(bool, track.available)
+    artists = track.artists_name()
+    albums = [cast(str, album.title) for album in track.albums]
+    lyrics = cast(bool, track.lyrics_available)
+    duration = cast(int, track.duration_ms)
+    explicit = track.explicit or track.content_warning
+    bg_video = track.background_video_uri
+    metadata = track.meta_data
+    year = track.albums[0].year
+    artist = track.artists[0]
+
+    cover_url = track.get_cover_url('400x400')
+    color = await get_average_color_from_url(cover_url)
+
+    if explicit:
+        explicit_eid = getenv('EXPLICIT_EID')
+        if not explicit_eid:
+            raise ValueError('You must specify explicit emoji id in your enviroment (EXPLICIT_EID).')
+        title += ' <:explicit:' + explicit_eid + '>'
+
+    duration_m = duration // 60000
+    duration_s = ceil(duration / 1000) - duration_m * 60
+
+    artist_url = f"https://music.yandex.ru/artist/{artist.id}"
+    artist_cover = artist.cover
+    if not artist_cover:
+        artist_cover_url = artist.get_op_image_url()
+    else:
+        artist_cover_url = artist_cover.get_url()
+
+    embed = Embed(
+        title=title,
+        description=", ".join(albums),
+        color=color,
+    )
+    embed.set_thumbnail(url=cover_url)
+    embed.set_author(name=", ".join(artists), url=artist_url, icon_url=artist_cover_url)
+
+    embed.add_field(name="Текст песни", value="Есть" if lyrics else "Нет")
+    embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
+
+    if year:
+        embed.add_field(name="Год выпуска", value=str(year))
+
+    if metadata:
+        if metadata.year:
+            embed.add_field(name="Год выхода", value=str(metadata.year))
+
+        if metadata.number:
+            embed.add_field(name="Позиция", value=str(metadata.number))
+
+        if metadata.composer:
+            embed.add_field(name="Композитор", value=metadata.composer)
+
+        if metadata.version:
+            embed.add_field(name="Версия", value=metadata.version)
+
+    if bg_video:
+        embed.add_field(name="Видеофон", value=f"[Ссылка]({bg_video})")
+
+    if not avail:
+        embed.set_footer(text=f"Трек в данный момент недоступен.")
+
+    return embed
+
+async def generate_album_embed(album: Album) -> Embed:
+    title = cast(str, album.title)
+    track_count = album.track_count
+    artists = album.artists_name()
+    avail = cast(bool, album.available)
+    description = album.short_description
+    year = album.year
+    version = album.version
+    bests = album.bests
+    duration = album.duration_ms
+    explicit = album.explicit or album.content_warning
+    likes_count = album.likes_count
+    artist = album.artists[0]
+
+    cover_url = album.get_cover_url('400x400')
+    color = await get_average_color_from_url(cover_url)
+
+    if isinstance(album.labels[0], Label):
+        labels = [cast(Label, label).name for label in album.labels]
+    else:
+        labels = [cast(str, label) for label in album.labels]
+
+    if version:
+        title += f' *{version}*'
+
+    if explicit:
+        explicit_eid = getenv('EXPLICIT_EID')
+        if not explicit_eid:
+            raise ValueError('You must specify explicit emoji id in your enviroment.')
+        title += ' <:explicit:' + explicit_eid + '>'
+
+    artist_url = f"https://music.yandex.ru/artist/{artist.id}"
+    artist_cover = artist.cover
+    if not artist_cover:
+        artist_cover_url = artist.get_op_image_url()
+    else:
+        artist_cover_url = artist_cover.get_url()
+
+    embed = Embed(
+        title=title,
+        description=description,
+        color=color,
+    )
+    embed.set_thumbnail(url=cover_url)
+    embed.set_author(name=", ".join(artists), url=artist_url, icon_url=artist_cover_url)
+
+    if year:
+        embed.add_field(name="Год выпуска", value=str(year))
+
+    if duration:
+        duration_m = duration // 60000
+        duration_s = ceil(duration / 1000) - duration_m * 60
+        embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
+
+    if track_count is not None:
+        if track_count > 1:
+            embed.add_field(name="Треки", value=str(track_count))
+        else:
+            embed.add_field(name="Треки", value="Сингл")
+
+    if likes_count:
+        embed.add_field(name="Лайки", value=str(likes_count))
+
+    if len(labels) > 1:
+        embed.add_field(name="Лейблы", value=", ".join(labels))
+    else:
+        embed.add_field(name="Лейбл", value=", ".join(labels))
+
+    if not avail:
+        embed.set_footer(text=f"Альбом в данный момент недоступен.")
+
+    return embed
+
+async def generate_artist_embed(artist: Artist) -> Embed:
+    name = cast(str, artist.name)
+    likes_count = artist.likes_count
+    avail = cast(bool, artist.available)
+    counts = artist.counts
+    description = artist.description
+    ratings = artist.ratings
+    popular_tracks = artist.popular_tracks
+
+    if not artist.cover:
+        cover_url = artist.get_op_image_url('400x400')
+    else:
+        cover_url = artist.cover.get_url(size='400x400')
+    color = await get_average_color_from_url(cover_url)
+
+    embed = Embed(
+        title=name,
+        description=description.text if description else None,
+        color=color,
+    )
+    embed.set_thumbnail(url=cover_url)
+
+    if likes_count:
+        embed.add_field(name="Лайки", value=str(likes_count))
+
+    # if ratings:
+    #    embed.add_field(name="Слушателей за месяц", value=str(ratings.month))  # Wrong numbers?
+
+    if counts:
+        embed.add_field(name="Треки", value=str(counts.tracks))
     
-    async def callback(self, interaction: Interaction) -> None:
-        if not interaction.user:
-            return
-        user = self.users_db.get_user(interaction.user.id)
-        page = user['playlists_page'] + 1
-        self.users_db.update(interaction.user.id, {'playlists_page': page})
-        embed = generate_playlist_embed(page, user['playlists'])
-        await interaction.edit(embed=embed, view=MyPlaylists(interaction))
+        embed.add_field(name="Альбомы", value=str(counts.direct_albums))
 
-class MPPrevButton(Button, VoiceExtension):
-    def __init__(self, **kwargs):
-        Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self, None)
+    if artist.genres:
+        genres = [genre.capitalize() for genre in artist.genres]
+        if len(genres) > 1:
+            embed.add_field(name="Жанры", value=", ".join(genres))
+        else:
+            embed.add_field(name="Жанр", value=", ".join(genres))
+
+    if not avail:
+        embed.set_footer(text=f"Артист в данный момент недоступен.")
+
+    return embed
     
-    async def callback(self, interaction: Interaction) -> None:
-        if not interaction.user:
-            return
-        user = self.users_db.get_user(interaction.user.id)
-        page = user['playlists_page'] - 1
-        self.users_db.update(interaction.user.id, {'playlists_page': page})
-        embed = generate_playlist_embed(page, user['playlists'])
-        await interaction.edit(embed=embed, view=MyPlaylists(interaction))
+async def generate_playlist_embed(playlist: Playlist) -> Embed:
+    title = cast(str, playlist.title)
+    track_count = playlist.track_count
+    avail = cast(bool, playlist.available)
+    description = playlist.description_formatted
+    year = playlist.created
+    modified = playlist.modified
+    duration = playlist.duration_ms
+    likes_count = playlist.likes_count
 
-class MyPlaylists(View, VoiceExtension):
-    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
-        View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        VoiceExtension.__init__(self, None)
-        if not ctx.user:
-            return
-        user = self.users_db.get_user(ctx.user.id)
-        count = 10 * user['playlists_page']
+    color = 0x000
+    cover_url = None
 
-        next_button = MPNextButton(style=ButtonStyle.primary, emoji='▶️')
-        prev_button = MPPrevButton(style=ButtonStyle.primary, emoji='◀️')
+    if playlist.cover and playlist.cover.uri:
+        cover_url = f"https://{playlist.cover.uri.replace('%%', '400x400')}"
+    else:
+        tracks = await playlist.fetch_tracks_async()
+        for i in range(len(tracks)):
+            track = tracks[i].track
+            if not track or not track.albums or not track.albums[0].cover_uri:
+                continue
 
-        if not user['playlists'][count + 10:]:
-            next_button.disabled = True
-        if not user['playlists'][:count]:
-            prev_button.disabled = True
+    if cover_url:
+        color = await get_average_color_from_url(cover_url)
 
-        self.add_item(prev_button)
-        self.add_item(next_button)
+    embed = Embed(
+        title=title,
+        description=description,
+        color=color,
+    )
+    embed.set_thumbnail(url=cover_url)
 
-class QNextButton(Button, VoiceExtension):
-    def __init__(self, **kwargs):
-        Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self, None)
-    
-    async def callback(self, interaction: Interaction) -> None:
-        if not interaction.user or not interaction.guild:
-            return
-        user = self.users_db.get_user(interaction.user.id)
-        page = user['queue_page'] + 1
-        self.users_db.update(interaction.user.id, {'queue_page': page})
-        tracks = self.db.get_tracks_list(interaction.guild.id, 'next')
-        embed = generate_queue_embed(page, tracks)
-        await interaction.edit(embed=embed, view=QueueView(interaction))
+    if year:
+        embed.add_field(name="Год создания", value=str(year).split('-')[0])
 
-class QPrevButton(Button, VoiceExtension):
-    def __init__(self, **kwargs):
-        Button.__init__(self, **kwargs)
-        VoiceExtension.__init__(self, None)
-    
-    async def callback(self, interaction: Interaction) -> None:
-        if not interaction.user or not interaction.guild:
-            return
-        user = self.users_db.get_user(interaction.user.id)
-        page = user['queue_page'] - 1
-        self.users_db.update(interaction.user.id, {'queue_page': page})
-        tracks = self.db.get_tracks_list(interaction.guild.id, 'next')
-        embed = generate_queue_embed(page, tracks)
-        await interaction.edit(embed=embed, view=QueueView(interaction))
+    if modified:
+        embed.add_field(name="Изменён", value=str(modified).split('-')[0])
 
-class QueueView(View, VoiceExtension):
-    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
-        View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
-        VoiceExtension.__init__(self, None)
-        if not ctx.user or not ctx.guild:
-            return
+    if duration:
+        duration_m = duration // 60000
+        duration_s = ceil(duration / 1000) - duration_m * 60
+        embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
 
-        tracks = self.db.get_tracks_list(ctx.guild.id, 'next')
-        user = self.users_db.get_user(ctx.user.id)
-        count = 15 * user['queue_page']
+    if track_count is not None:
+        embed.add_field(name="Треки", value=str(track_count))
 
-        next_button = QNextButton(style=ButtonStyle.primary, emoji='▶️')
-        prev_button = QPrevButton(style=ButtonStyle.primary, emoji='◀️')
+    if likes_count:
+        embed.add_field(name="Лайки", value=str(likes_count))
 
-        if not tracks[count + 15:]:
-            next_button.disabled = True
-        if not tracks[:count]:
-            prev_button.disabled = True
+    if not avail:
+        embed.set_footer(text=f"Плейлист в данный момент недоступен.")
 
-        self.add_item(prev_button)
-        self.add_item(next_button)
+    return embed
+
+async def get_average_color_from_url(url: str) -> int:
+    """Get image from url and calculate its average color to use in embeds.
+
+    Args:
+        url (str): Image url.
+
+    Returns:
+        int: RGB Hex code. 0x000 if failed.
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                result = await response.read()
+
+        img_file = Image.open(BytesIO(result))
+        img = img_file.convert('RGB')
+        width, height = img.size
+        r_total, g_total, b_total = 0, 0, 0
+        
+        for y in range(height):
+            for x in range(width):
+                r, g, b = cast(tuple, img.getpixel((x, y)))
+                r_total += r
+                g_total += g
+                b_total += b
+
+        count = width * height
+        r = r_total // count
+        g = g_total // count
+        b = b_total // count
+
+        return (r << 16) + (g << 8) + b
+    except Exception:
+        return 0x000

@@ -1,4 +1,5 @@
-from typing import cast
+import logging
+from typing import Literal, cast
 from asyncio import gather
 
 import discord
@@ -10,11 +11,9 @@ from yandex_music import ClientAsync as YMClient
 from yandex_music import Track, Album, Artist, Playlist
 
 from MusicBot.database import BaseUsersDatabase, BaseGuildsDatabase
-from MusicBot.cogs.utils.find import (
-    process_album, process_track, process_artist, process_playlist,
-    ListenAlbum, ListenTrack, ListenArtist, ListenPlaylist, ListenLikesPlaylist
-)
-from MusicBot.cogs.utils.misc import MyPlaylists, generate_playlist_embed, generate_likes_embed
+from MusicBot.cogs.utils.find import ListenView, generate_item_embed
+from MusicBot.cogs.utils.misc import generate_playlists_embed, generate_likes_embed
+from MusicBot.cogs.utils.views import MyPlaylists
 
 def setup(bot):
     bot.add_cog(General(bot))
@@ -36,6 +35,7 @@ class General(Cog):
         default='all'
     )
     async def help(self, ctx: discord.ApplicationContext, command: str) -> None:
+        logging.debug(f"Help command invoked by {ctx.user.id} for command '{command}'")
         response_message = None
         embed = discord.Embed(
             color=0xfed42b
@@ -109,41 +109,54 @@ class General(Cog):
     @account.command(description="Ввести токен от Яндекс Музыки.")
     @discord.option("token", type=discord.SlashCommandOptionType.string, description="Токен.")
     async def login(self, ctx: discord.ApplicationContext, token: str) -> None:
+        logging.debug(f"Login command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
         try:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
+            logging.debug(f"Invalid token provided by user {ctx.author.id}")
             await ctx.respond('❌ Недействительный токен.', delete_after=15, ephemeral=True)
             return
         about = cast(yandex_music.Status, client.me).to_dict()
         uid = ctx.author.id
 
         self.users_db.update(uid, {'ym_token': token})
+        logging.debug(f"Token saved for user {ctx.author.id}")
         await ctx.respond(f'Привет, {about['account']['first_name']}!', delete_after=15, ephemeral=True)
     
     @account.command(description="Удалить токен из датабазы бота.")
     async def remove(self, ctx: discord.ApplicationContext) -> None:
+        logging.debug(f"Remove command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
         self.users_db.update(ctx.user.id, {'ym_token': None})
         await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 
     @account.command(description="Получить плейлист «Мне нравится»")
     async def likes(self, ctx: discord.ApplicationContext) -> None:
+        logging.debug(f"Likes command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
+            logging.debug(f"No token found for user {ctx.user.id}")
             await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
             return
         client = await YMClient(token).init()
         if not client.me or not client.me.account or not client.me.account.uid:
+            logging.warning(f"Failed to fetch user info for user {ctx.user.id}")
             await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
             return
         likes = await client.users_likes_tracks()
-        if not likes:
+        if likes is None:
+            logging.debug(f"Failed to fetch likes for user {ctx.user.id}")
             await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            return
+        elif not likes:
+            logging.debug(f"Empty likes for user {ctx.user.id}")
+            await ctx.respond('❌ У вас нет треков в плейлисте «Мне нравится».', delete_after=15, ephemeral=True)
             return
         
         real_tracks = await gather(*[track_short.fetch_track_async() for track_short in likes.tracks], return_exceptions=True)
         tracks = [track for track in real_tracks if not isinstance(track, BaseException)]  # Can't fetch user tracks
         embed = generate_likes_embed(tracks)
-        await ctx.respond(embed=embed, view=ListenLikesPlaylist(tracks))
+        logging.debug(f"Successfully fetched likes for user {ctx.user.id}")
+        await ctx.respond(embed=embed, view=ListenView(tracks))
     
     @account.command(description="Получить ваши плейлисты.")
     async def playlists(self, ctx: discord.ApplicationContext) -> None:
@@ -160,7 +173,8 @@ class General(Cog):
             (playlist.title if playlist.title else 'Без названия', playlist.track_count if playlist.track_count else 0) for playlist in playlists_list
         ]
         self.users_db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
-        embed = generate_playlist_embed(0, playlists)
+        embed = generate_playlists_embed(0, playlists)
+        logging.debug(f"Successfully fetched playlists for user {ctx.user.id}")
         await ctx.respond(embed=embed, view=MyPlaylists(ctx), ephemeral=True)
     
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
@@ -173,99 +187,114 @@ class General(Cog):
         "content_type",
         description="Тип искомого контента.",
         type=discord.SlashCommandOptionType.string,
-        choices=['Artist', 'Album', 'Track', 'Playlist', 'User Playlist'],
-        default='Track'
+        choices=['Трек', 'Альбом', 'Артист', 'Плейлист', 'Свой плейлист'],
+        default='Трек'
     )
     async def find(
         self,
         ctx: discord.ApplicationContext,
         name: str,
-        content_type: str = 'Track'
+        content_type: Literal['Трек', 'Альбом', 'Артист', 'Плейлист', 'Свой плейлист'] = 'Трек'
     ) -> None:
-        if content_type not in ['Artist', 'Album', 'Track', 'Playlist', 'User Playlist']:
-            await ctx.respond("❌ Недопустимый тип.", delete_after=15, ephemeral=True)
-            return
-        
+        logging.debug(f"User {ctx.user.id} invoked find command for '{content_type}' with name '{name}'")
         guild = self.db.get_guild(ctx.guild_id)
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
+            logging.debug(f"No token found for user {ctx.user.id}")
             await ctx.respond("❌ Необходимо указать свой токен доступа с помощью команды /login.", delete_after=15, ephemeral=True)
             return
 
         try:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
+            logging.debug(f"User {ctx.user.id} provided invalid token")
             await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
             return
 
-        if content_type == 'User Playlist':
+        if content_type == 'Свой плейлист':
             if not client.me or not client.me.account or not client.me.account.uid:
+                logging.warning(f"Failed to get user info for user {ctx.user.id}")
                 await ctx.respond("❌ Не удалось получить информацию о пользователе.", delete_after=15, ephemeral=True)
                 return
 
             playlists = await client.users_playlists_list(client.me.account.uid)
             result = next((playlist for playlist in playlists if playlist.title == name), None)
             if not result:
+                logging.debug(f"User {ctx.user.id} playlist '{name}' not found")
                 await ctx.respond("❌ Плейлист не найден.", delete_after=15, ephemeral=True)
                 return
             
             tracks = await result.fetch_tracks_async()
             if not tracks:
+                logging.debug(f"User {ctx.user.id} playlist '{name}' is empty")
                 await ctx.respond("❌ Плейлист пуст.", delete_after=15, ephemeral=True)
                 return
             
             for track_short in tracks:
                 track = cast(Track, track_short.track)
                 if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                    logging.debug(f"User {ctx.user.id} playlist '{name}' contains explicit content and is not allowed on this server")
                     await ctx.respond("❌ Explicit контент запрещён на этом сервере.", delete_after=15, ephemeral=True)
                     return
             
-            embed = await process_playlist(result)
-            await ctx.respond(embed=embed, view=ListenPlaylist(result))
+            embed = await generate_item_embed(result)
+            view = ListenView(result)
         else:
             result = await client.search(name, True)
         
             if not result:
+                logging.warning(f"Failed to search for '{name}' for user {ctx.user.id}")
                 await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже", delete_after=15, ephemeral=True)
                 return
 
-            content_map = {
-                'Album': (result.albums, process_album, ListenAlbum),
-                'Track': (result.tracks, process_track, ListenTrack),
-                'Artist': (result.artists, process_artist, ListenArtist),
-                'Playlist': (result.playlists, process_playlist, ListenPlaylist)
-            }
+            if content_type == 'Трек':
+                content = result.tracks
+            elif content_type == 'Альбом':
+                content = result.albums
+            elif content_type == 'Артист':
+                content = result.artists
+            elif content_type == 'Плейлист':
+                content = result.playlists
 
-            if content_type in content_map:
-                content: Album | Track | Artist | Playlist = content_map[content_type][0].results[0]
-                embed: discord.Embed = await content_map[content_type][1](content)
-                view = content_map[content_type][2](content)
-                
-                if isinstance(content, (Track, Album)) and (content.explicit or content.content_warning) and not guild['allow_explicit']:
-                    await ctx.respond("❌ Explicit контент запрещён на этом сервере.", delete_after=15, ephemeral=True)
-                    return
-                elif isinstance(content, Artist):
-                    tracks = await content.get_tracks_async()
-                    if not tracks:
-                        await ctx.respond("❌ Треки от этого исполнителя не найдены.", delete_after=15, ephemeral=True)
-                        return
-                    for track in tracks:
-                        if (track.explicit or track.content_warning) and not guild['allow_explicit']:
-                            view = None
-                            embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
-                            break
-                elif isinstance(content, Playlist):
-                    tracks = await content.fetch_tracks_async()
-                    if not tracks:
-                        await ctx.respond("❌ Треки в этом плейлисте не найдены.", delete_after=15, ephemeral=True)
-                        return
-                    for track_short in content.tracks:
-                        track = cast(Track, track_short.track)
-                        if (track.explicit or track.content_warning) and not guild['allow_explicit']:
-                            view = None
-                            embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
-                            break
-                
-                await ctx.respond(embed=embed, view=view)
-            else:
+            if not content:
+                logging.debug(f"User {ctx.user.id} search for '{name}' returned no results")
                 await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)
+                return
+            content = content.results[0]
+
+            embed = await generate_item_embed(content)
+            view = ListenView(content)
+
+            if isinstance(content, (Track, Album)) and (content.explicit or content.content_warning) and not guild['allow_explicit']:
+                logging.debug(f"User {ctx.user.id} search for '{name}' returned explicit content and is not allowed on this server")
+                await ctx.respond("❌ Explicit контент запрещён на этом сервере.", delete_after=15, ephemeral=True)
+                return
+            elif isinstance(content, Artist):
+                tracks = await content.get_tracks_async()
+                if not tracks:
+                    logging.debug(f"User {ctx.user.id} search for '{name}' returned no tracks")
+                    await ctx.respond("❌ Треки от этого исполнителя не найдены.", delete_after=15, ephemeral=True)
+                    return
+                for track in tracks:
+                    if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                        logging.debug(f"User {ctx.user.id} search for '{name}' returned explicit content and is not allowed on this server")
+                        view = None
+                        embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
+                        break
+            elif isinstance(content, Playlist):
+                tracks = await content.fetch_tracks_async()
+                if not tracks:
+                    logging.debug(f"User {ctx.user.id} search for '{name}' returned no tracks")
+                    await ctx.respond("❌ Пустой плейлист.", delete_after=15, ephemeral=True)
+                    return
+                for track_short in content.tracks:
+                    track = cast(Track, track_short.track)
+                    if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                        logging.debug(f"User {ctx.user.id} search for '{name}' returned explicit content and is not allowed on this server")
+                        view = None
+                        embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
+                        break
+        
+        logging.debug(f"Successfully generated '{content_type}' message for user {ctx.author.id}")
+        await ctx.respond(embed=embed, view=view)
+

@@ -4,12 +4,6 @@ import logging
 import discord
 from discord.ext.commands import Bot
 
-try:
-    import coloredlogs
-    coloredlogs.install()
-except ImportError:
-    pass
-
 intents = discord.Intents.default()
 intents.message_content = True
 bot = Bot(intents=intents)
@@ -28,6 +22,17 @@ if __name__ == '__main__':
     from dotenv import load_dotenv
     load_dotenv()
     
+    try:
+        import coloredlogs
+        coloredlogs.install(level=logging.DEBUG)
+    except ImportError:
+        pass
+    
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger('discord').setLevel(logging.INFO)
+    logging.getLogger('pymongo').setLevel(logging.INFO)
+    logging.getLogger('yandex_music').setLevel(logging.WARNING)
+    
     if not os.path.exists('music'):
         os.mkdir('music')
     token = os.getenv('TOKEN')
@@ -36,8 +41,5 @@ if __name__ == '__main__':
     
     for cog in cogs_list:
         bot.load_extension(f'MusicBot.cogs.{cog}')
-    
-    logging.basicConfig(format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
-    logging.getLogger('discord').setLevel(logging.INFO)
     
     bot.run(token)
