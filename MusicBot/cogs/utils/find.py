@@ -1,5 +1,5 @@
 import logging
-from typing import cast
+from typing import Literal, cast
 
 import discord
 from yandex_music import Track, Album, Artist, Playlist
@@ -31,6 +31,7 @@ class PlayButton(Button, VoiceExtension):
         guild = self.db.get_guild(gid)
         channel = cast(discord.VoiceChannel, interaction.channel)
         member = cast(discord.Member, interaction.user)
+        action: Literal['add_track', 'add_album', 'add_artist', 'add_playlist']
 
         if isinstance(self.item, Track):
             tracks = [self.item]
@@ -38,39 +39,46 @@ class PlayButton(Button, VoiceExtension):
             vote_message = f"{member.mention} хочет добавить трек **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Трек **{self.item.title}** был добавлен в очередь."
             play_message = f"Сейчас играет: **{self.item.title}**!"
+
         elif isinstance(self.item, Album):
             album = await self.item.with_tracks_async()
             if not album or not album.volumes:
                 logging.debug("Failed to fetch album tracks")
                 await interaction.respond("Не удалось получить треки альбома.", ephemeral=True)
                 return
+
             tracks = [track for volume in album.volumes for track in volume]
             action = 'add_album'
             vote_message = f"{member.mention} хочет добавить альбом **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Альбом **{self.item.title}** был добавлен в очередь."
             play_message = f"Сейчас играет: **{self.item.title}**!"
+
         elif isinstance(self.item, Artist):
             artist_tracks = await self.item.get_tracks_async()
             if not artist_tracks:
                 logging.debug("Failed to fetch artist tracks")
                 await interaction.respond("Не удалось получить треки артиста.", ephemeral=True)
                 return
+
             tracks = artist_tracks.tracks.copy()
             action = 'add_artist'
             vote_message = f"{member.mention} хочет добавить треки от **{self.item.name}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Песни артиста **{self.item.name}** были добавлены в очередь."
             play_message = f"Сейчас играет: **{self.item.name}**!"
+
         elif isinstance(self.item, Playlist):
             short_tracks = await self.item.fetch_tracks_async()
             if not short_tracks:
                 logging.debug("Failed to fetch playlist tracks")
                 await interaction.respond("❌ Не удалось получить треки из плейлиста.", delete_after=15)
                 return
+
             tracks = [cast(Track, short_track.track) for short_track in short_tracks]
             action = 'add_playlist'
             vote_message = f"{member.mention} хочет добавить плейлист **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Плейлист **{self.item.title}** был добавлен в очередь."
             play_message = f"Сейчас играет: **{self.item.title}**!"
+
         elif isinstance(self.item, list):
             tracks = self.item.copy()
             if not tracks:
@@ -81,16 +89,19 @@ class PlayButton(Button, VoiceExtension):
             action = 'add_playlist'
             vote_message = f"{member.mention} хочет добавить плейлист **** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Плейлист **«Мне нравится»** был добавлен в очередь."
-            play_message = f"Сейчас играет: **{tracks[0].title}**!"
+
         else:
             raise ValueError(f"Unknown item type: '{type(self.item).__name__}'")
 
         if guild.get(f'vote_{action}') and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
             logging.debug(f"Starting vote for '{action}'")
+
             message = cast(discord.Interaction, await interaction.respond(vote_message, delete_after=30))
             response = await message.original_response()
+
             await response.add_reaction('✅')
             await response.add_reaction('❌')
+
             self.db.update_vote(
                 gid,
                 response.id,
@@ -104,27 +115,30 @@ class PlayButton(Button, VoiceExtension):
             )
         else:
             logging.debug(f"Skipping vote for '{action}'")
+
             if guild['current_track'] is not None:
                 self.db.modify_track(gid, tracks, 'next', 'extend')
-                response_message = response_message
             else:
                 track = tracks.pop(0)
                 self.db.modify_track(gid, tracks, 'next', 'extend')
                 await self.play_track(interaction, track)
-                response_message = play_message
+                response_message = f"Сейчас играет: **{tracks[0].title}**!"
             
+            current_player = None
             if guild['current_player']:
                 current_player = await self.get_player_message(interaction, guild['current_player'])
-                if current_player and interaction.message:
-                    logging.debug(f"Deleting interaction message '{interaction.message.id}': current player '{current_player.id}' found")
-                    await interaction.message.delete()
 
-            await interaction.respond(response_message, delete_after=15)
+            if current_player and interaction.message:
+                logging.debug(f"Deleting interaction message '{interaction.message.id}': current player '{current_player.id}' found")
+                await interaction.message.delete()
+            else:
+                await interaction.respond(response_message, delete_after=15)
 
 class ListenView(View):
     def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         logging.debug(f"Creating view for type: '{type(item).__name__}'")
+
         if isinstance(item, Track):
             link_app = f"yandexmusic://album/{item.albums[0].id}/track/{item.id}"
             link_web = f"https://music.yandex.ru/album/{item.albums[0].id}/track/{item.id}"
@@ -140,9 +154,11 @@ class ListenView(View):
         elif isinstance(item, list):  # Can't open other person's likes
             self.add_item(PlayButton(item, label="Слушать в голосовом канале", style=ButtonStyle.gray))
             return
+
         self.button1: Button = Button(label="Слушать в приложении", style=ButtonStyle.gray, url=link_app)
         self.button2: Button = Button(label="Слушать в браузере", style=ButtonStyle.gray, url=link_web)
         self.button3: PlayButton = PlayButton(item, label="Слушать в голосовом канале", style=ButtonStyle.gray)
+
         if item.available:
             # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
             self.add_item(self.button2)
@@ -158,6 +174,7 @@ async def generate_item_embed(item: Track | Album | Artist | Playlist) -> Embed:
         discord.Embed: Item embed.
     """
     logging.debug(f"Generating embed for type: '{type(item).__name__}'")
+
     if isinstance(item, Track):
         return await generate_track_embed(item)
     elif isinstance(item, Album):

@@ -6,14 +6,6 @@ from MusicBot.database import BaseGuildsDatabase
 
 class VoiceGuildsDatabase(BaseGuildsDatabase):
     
-    def clear_history(self, gid: int) -> None:
-        """Clear previous and next tracks list.
-
-        Args:
-            gid (int): _description_
-        """
-        self.update(gid, {'previous_tracks': [], 'next_tracks': []})
-    
     def get_tracks_list(self, gid: int, type: Literal['next', 'previous']) -> list[dict[str, Any]]:
         """Get tracks list with given type.
 
