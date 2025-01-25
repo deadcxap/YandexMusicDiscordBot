@@ -6,10 +6,8 @@ from discord.ext.commands import Cog
 
 from yandex_music import Track, ClientAsync
 
-from MusicBot.cogs.utils.voice_extension import VoiceExtension
-from MusicBot.cogs.utils.player import Player
-from MusicBot.cogs.utils.misc import generate_queue_embed, generate_track_embed
-from MusicBot.cogs.utils.views import QueueView
+from MusicBot.cogs.utils import VoiceExtension, generate_item_embed
+from MusicBot.ui import MenuView, QueueView, generate_queue_embed
 
 def setup(bot: discord.Bot):
     bot.add_cog(Voice(bot))
@@ -31,6 +29,7 @@ class Voice(Cog, VoiceExtension):
         gid = member.guild.id
         guild = self.db.get_guild(gid)
         discord_guild = await self.typed_bot.fetch_guild(gid)
+        current_player = self.db.get_current_player(gid)
 
         channel = after.channel or before.channel
         if not channel:
@@ -44,7 +43,6 @@ class Voice(Cog, VoiceExtension):
             self.db.update(gid, {'previous_tracks': [], 'next_tracks': [], 'current_track': None, 'is_stopped': True})
             vc.stop()
         elif len(channel.members) > 2 and not guild['always_allow_menu']:
-            current_player = self.db.get_current_player(gid)
             if current_player:
                 logging.info(f"Disabling current player for guild {gid} due to multiple members")
 
@@ -52,6 +50,7 @@ class Voice(Cog, VoiceExtension):
                 try:
                     message = await channel.fetch_message(current_player)
                     await message.delete()
+                    await channel.send("Меню отключено из-за большого количества участников.", delete_after=15)
                 except (discord.NotFound, discord.Forbidden):
                     pass
 
@@ -201,7 +200,7 @@ class Voice(Cog, VoiceExtension):
             return
 
         if guild['current_track']:
-            embed = await generate_track_embed(
+            embed = await generate_item_embed(
                 Track.de_json(
                     guild['current_track'],
                     client=ClientAsync()  # type: ignore  # Async client can be used here.
@@ -215,10 +214,11 @@ class Voice(Cog, VoiceExtension):
 
         if guild['current_player']:
             logging.info(f"Deleteing old player menu {guild['current_player']} in guild {ctx.guild.id}")
-            message = await ctx.fetch_message(guild['current_player'])
-            await message.delete()
+            message = await self.get_player_message(ctx, guild['current_player'])
+            if message:
+                await message.delete()
 
-        interaction = cast(discord.Interaction, await ctx.respond(view=Player(ctx), embed=embed, delete_after=3600))
+        interaction = cast(discord.Interaction, await ctx.respond(view=await MenuView(ctx).init(), embed=embed, delete_after=3600))
         response = await interaction.original_response()
         self.db.update(ctx.guild.id, {'current_player': response.id})
 
@@ -306,7 +306,7 @@ class Voice(Cog, VoiceExtension):
 
                 player = self.db.get_current_player(ctx.guild.id)
                 if player:
-                    await self.update_player_embed(ctx, player)
+                    await self.update_menu_embed(ctx, player)
 
                 logging.info(f"Track paused in guild {ctx.guild.id}")
                 await ctx.respond("Воспроизведение приостановлено.", delete_after=15, ephemeral=True)
@@ -330,7 +330,7 @@ class Voice(Cog, VoiceExtension):
                 vc.resume()
                 player = self.db.get_current_player(ctx.guild.id)
                 if player:
-                    await self.update_player_embed(ctx, player)
+                    await self.update_menu_embed(ctx, player)
                 logging.info(f"Track resumed in guild {ctx.guild.id}")
                 await ctx.respond("Воспроизведение восстановлено.", delete_after=15, ephemeral=True)
             else:

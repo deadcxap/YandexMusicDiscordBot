@@ -1,4 +1,5 @@
-from typing import Any, cast
+import logging
+from typing import cast
 from math import ceil
 from os import getenv
 
@@ -9,7 +10,31 @@ from PIL import Image
 from yandex_music import Track, Album, Artist, Playlist, Label
 from discord import Embed
 
-def generate_likes_embed(tracks: list[Track]) -> Embed:
+async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Track]) -> Embed:
+    """Generate item embed.
+
+    Args:
+        item (yandex_music.Track | yandex_music.Album | yandex_music.Artist | yandex_music.Playlist): Item to be processed.
+
+    Returns:
+        discord.Embed: Item embed.
+    """
+    logging.debug(f"Generating embed for type: '{type(item).__name__}'")
+
+    if isinstance(item, Track):
+        return await _generate_track_embed(item)
+    elif isinstance(item, Album):
+        return await _generate_album_embed(item)
+    elif isinstance(item, Artist):
+        return await _generate_artist_embed(item)
+    elif isinstance(item, Playlist):
+        return await _generate_playlist_embed(item)
+    elif isinstance(item, list):
+        return _generate_likes_embed(item)
+    else:
+        raise ValueError(f"Unknown item type: {type(item).__name__}")
+
+def _generate_likes_embed(tracks: list[Track]) -> Embed:
     track_count = len(tracks)
     cover_url = "https://avatars.yandex.net/get-music-user-playlist/11418140/favorit-playlist-cover.bb48fdb9b9f4/300x300"
 
@@ -34,37 +59,7 @@ def generate_likes_embed(tracks: list[Track]) -> Embed:
 
     return embed
 
-def generate_playlists_embed(page: int, playlists: list[tuple[str, int]]) -> Embed:
-    count = 15 * page
-    length = len(playlists)
-    embed = Embed(
-        title=f"Всего плейлистов: {length}",
-        color=0xfed42b
-    )
-    embed.set_author(name="Ваши плейлисты")
-    embed.set_footer(text=f"Страница {page + 1} из {ceil(length / 10)}")
-    for playlist in playlists[count:count + 10]:
-        embed.add_field(name=playlist[0], value=f"{playlist[1]} треков", inline=False)
-    return embed
-
-def generate_queue_embed(page: int, tracks_list: list[dict[str, Any]]) -> Embed:
-    count = 15 * page
-    length = len(tracks_list)
-    embed = Embed(
-        title=f"Всего: {length}",
-        color=0xfed42b,
-    )
-    embed.set_author(name="Очередь треков")
-    embed.set_footer(text=f"Страница {page + 1} из {ceil(length / 15)}")
-    for i, track in enumerate(tracks_list[count:count + 15], start=1 + count):
-        duration = track['duration_ms']
-        if duration:
-            duration_m = duration // 60000
-            duration_s = ceil(duration / 1000) - duration_m * 60
-            embed.add_field(name=f"{i} - {track['title']} - {duration_m}:{duration_s:02d}", value="", inline=False)
-    return embed
-
-async def generate_track_embed(track: Track) -> Embed:
+async def _generate_track_embed(track: Track) -> Embed:
     title = cast(str, track.title)
     avail = cast(bool, track.available)
     artists = track.artists_name()
@@ -78,7 +73,7 @@ async def generate_track_embed(track: Track) -> Embed:
     artist = track.artists[0]
 
     cover_url = track.get_cover_url('400x400')
-    color = await get_average_color_from_url(cover_url)
+    color = await _get_average_color_from_url(cover_url)
 
     if explicit:
         explicit_eid = getenv('EXPLICIT_EID')
@@ -131,7 +126,7 @@ async def generate_track_embed(track: Track) -> Embed:
 
     return embed
 
-async def generate_album_embed(album: Album) -> Embed:
+async def _generate_album_embed(album: Album) -> Embed:
     title = cast(str, album.title)
     track_count = album.track_count
     artists = album.artists_name()
@@ -146,7 +141,7 @@ async def generate_album_embed(album: Album) -> Embed:
     artist = album.artists[0]
 
     cover_url = album.get_cover_url('400x400')
-    color = await get_average_color_from_url(cover_url)
+    color = await _get_average_color_from_url(cover_url)
 
     if isinstance(album.labels[0], Label):
         labels = [cast(Label, label).name for label in album.labels]
@@ -204,7 +199,7 @@ async def generate_album_embed(album: Album) -> Embed:
 
     return embed
 
-async def generate_artist_embed(artist: Artist) -> Embed:
+async def _generate_artist_embed(artist: Artist) -> Embed:
     name = cast(str, artist.name)
     likes_count = artist.likes_count
     avail = cast(bool, artist.available)
@@ -217,7 +212,7 @@ async def generate_artist_embed(artist: Artist) -> Embed:
         cover_url = artist.get_op_image_url('400x400')
     else:
         cover_url = artist.cover.get_url(size='400x400')
-    color = await get_average_color_from_url(cover_url)
+    color = await _get_average_color_from_url(cover_url)
 
     embed = Embed(
         title=name,
@@ -249,7 +244,7 @@ async def generate_artist_embed(artist: Artist) -> Embed:
 
     return embed
     
-async def generate_playlist_embed(playlist: Playlist) -> Embed:
+async def _generate_playlist_embed(playlist: Playlist) -> Embed:
     title = cast(str, playlist.title)
     track_count = playlist.track_count
     avail = cast(bool, playlist.available)
@@ -272,7 +267,7 @@ async def generate_playlist_embed(playlist: Playlist) -> Embed:
                 continue
 
     if cover_url:
-        color = await get_average_color_from_url(cover_url)
+        color = await _get_average_color_from_url(cover_url)
 
     embed = Embed(
         title=title,
@@ -303,7 +298,7 @@ async def generate_playlist_embed(playlist: Playlist) -> Embed:
 
     return embed
 
-async def get_average_color_from_url(url: str) -> int:
+async def _get_average_color_from_url(url: str) -> int:
     """Get image from url and calculate its average color to use in embeds.
 
     Args:

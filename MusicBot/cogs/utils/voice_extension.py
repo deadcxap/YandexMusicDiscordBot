@@ -2,12 +2,12 @@ import asyncio
 import logging
 from typing import Any, Literal, cast
 
-from yandex_music import Track, ClientAsync
+from yandex_music import Track, TrackShort, ClientAsync
 
 import discord
 from discord import Interaction, ApplicationContext, RawReactionActionEvent
 
-from MusicBot.cogs.utils.misc import generate_track_embed
+from MusicBot.cogs.utils import generate_item_embed
 from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
 
 class VoiceExtension:
@@ -17,7 +17,7 @@ class VoiceExtension:
         self.db = VoiceGuildsDatabase()
         self.users_db = BaseUsersDatabase()
 
-    async def update_player_embed(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, player_mid: int) -> bool:
+    async def update_menu_embed(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, player_mid: int) -> bool:
         """Update current player message by its id. Return True if updated, False if not.
 
         Args:
@@ -59,7 +59,7 @@ class VoiceExtension:
             current_track,
             client=ClientAsync(token)  # type: ignore  # Async client can be used here.
         ))
-        embed = await generate_track_embed(track)
+        embed = await generate_item_embed(track)
 
         if isinstance(ctx, Interaction) and ctx.message and ctx.message.id == player_mid:
             # If interaction from player buttons
@@ -230,7 +230,7 @@ class VoiceExtension:
 
         player = guild['current_player']
         if player is not None:
-            await self.update_player_embed(ctx, player)
+            await self.update_menu_embed(ctx, player)
 
         return track.title
 
@@ -369,6 +369,35 @@ class VoiceExtension:
 
         return None
 
+    async def get_likes(self, ctx: ApplicationContext | Interaction) -> list[TrackShort] | None:
+        """Get liked tracks. Return list of tracks on success.
+           Return None if no token found.
+        
+        Args:
+           ctx (ApplicationContext | Interaction): Context.
+        
+        Returns:
+           list[Track] | None: List of tracks or None.
+        """
+        
+        if not ctx.guild or not ctx.user:
+            logging.warning("Guild or User not found in context inside 'like_track'")
+            return None
+
+        current_track = self.db.get_track(ctx.guild.id, 'current')
+        token = self.users_db.get_ym_token(ctx.user.id)
+        if not current_track or not token:
+            logging.debug("Current track or token not found")
+            return None
+
+        client = await ClientAsync(token).init()
+        likes = await client.users_likes_tracks()
+        if not likes:
+            logging.debug("No likes found")
+            return None
+
+        return likes.tracks
+    
     async def like_track(self, ctx: ApplicationContext | Interaction) -> str | Literal['TRACK REMOVED'] | None:
         """Like current track. Return track title on success.
 
@@ -389,9 +418,8 @@ class VoiceExtension:
             return None
 
         client = await ClientAsync(token).init()
-        likes = await client.users_likes_tracks()
+        likes = await self.get_likes(ctx)
         if not likes:
-            logging.debug("No likes found")
             return None
 
         ym_track = cast(Track, Track.de_json(
@@ -399,7 +427,7 @@ class VoiceExtension:
             client=client  # type: ignore  # Async client can be used here.
             )
         )
-        if ym_track.id not in [track.id for track in likes.tracks]:
+        if str(ym_track.id) not in [str(track.id) for track in likes]:
             logging.debug("Track not found in likes. Adding...")
             await ym_track.like_async()
             return ym_track.title

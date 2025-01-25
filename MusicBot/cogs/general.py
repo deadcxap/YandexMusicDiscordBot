@@ -11,9 +11,9 @@ from yandex_music import ClientAsync as YMClient
 from yandex_music import Track, Album, Artist, Playlist
 
 from MusicBot.database import BaseUsersDatabase, BaseGuildsDatabase
-from MusicBot.cogs.utils.find import ListenView, generate_item_embed
-from MusicBot.cogs.utils.misc import generate_playlists_embed, generate_likes_embed
-from MusicBot.cogs.utils.views import MyPlaylists
+
+from MusicBot.ui import ListenView, MyPlaylists, generate_playlists_embed
+from MusicBot.cogs.utils.embeds import generate_item_embed
 
 def setup(bot):
     bot.add_cog(General(bot))
@@ -38,17 +38,17 @@ class General(Cog):
         logging.info(f"Help command invoked by {ctx.user.id} for command '{command}'")
         response_message = None
         embed = discord.Embed(
+            title='Помощь',
             color=0xfed42b
         )
+        embed.set_author(name='YandexMusic')
         embed.description = '__Использование__\n'
-        embed.set_author(name='Помощь')
 
         if command == 'all':
             embed.description = ("Данный бот позволяет вам слушать музыку из вашего аккаунта Yandex Music.\n"
                                 "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
                                 "Для получения помощи для конкретной команды, введите /help <команда>.\n\n"
                                 "**Для доп. помощи, зайдите на [сервер любителей Яндекс Музыки](https://discord.gg/gkmFDaPMeC).**")
-            embed.title = 'Помощь'
 
             embed.add_field(
                 name='__Основные команды__',
@@ -64,7 +64,6 @@ class General(Cog):
                 """
             )
 
-            embed.set_author(name='YandexMusic')
             embed.set_footer(text='©️ Bananchiki')
         elif command == 'account':
             embed.description += ("Ввести токен от Яндекс Музыки. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
@@ -87,7 +86,7 @@ class General(Cog):
         elif command == 'settings':
             embed.description += ("Получить текущие настройки.\n```/settings show```\n"
                                   "Разрешить или запретить воспроизведение Explicit треков и альбомов. Если автор или плейлист содержат Explicit треки, убираются кнопки для доступа к ним.\n```/settings explicit```\n"
-                                  "Разрешить или запретить создание меню проигрывателя, даже если в канале больше одного человека.\n```/settings menu```\n"
+                                  "Разрешить или запретить создание меню проигрывателя, когда в канале больше одного человека.\n```/settings menu```\n"
                                   "Разрешить или запретить голосование.\n```/settings vote <тип голосования>```\n"
                                   "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки.")
         elif command == 'track':
@@ -99,7 +98,7 @@ class General(Cog):
         elif command == 'voice':
             embed.description += ("Присоединить бота в голосовой канал. Требует разрешения управления каналом.\n ```/voice join```\n"
                                 "Заставить бота покинуть голосовой канал. Требует разрешения управления каналом.\n ```/voice leave```\n"
-                                "Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.\n```/voice menu```")
+                                "Создать меню проигрывателя. Доступность зависит от настроек сервера. По умолчанию работает только когда в канале один человек.\n```/voice menu```")
         else:
             response_message = '❌ Неизвестная команда.'
             embed = None
@@ -154,7 +153,7 @@ class General(Cog):
         
         real_tracks = await gather(*[track_short.fetch_track_async() for track_short in likes.tracks], return_exceptions=True)
         tracks = [track for track in real_tracks if not isinstance(track, BaseException)]  # Can't fetch user tracks
-        embed = generate_likes_embed(tracks)
+        embed = await generate_item_embed(tracks)
         logging.info(f"Successfully fetched likes for user {ctx.user.id}")
         await ctx.respond(embed=embed, view=ListenView(tracks))
     

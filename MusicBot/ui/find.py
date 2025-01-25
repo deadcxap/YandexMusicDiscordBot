@@ -5,10 +5,9 @@ import discord
 from yandex_music import Track, Album, Artist, Playlist
 
 from discord.ui import View, Button, Item
-from discord import ButtonStyle, Interaction, Embed
+from discord import ButtonStyle, Interaction
 
 from MusicBot.cogs.utils.voice_extension import VoiceExtension
-from MusicBot.cogs.utils.misc import generate_track_embed, generate_album_embed, generate_artist_embed, generate_playlist_embed
 
 class PlayButton(Button, VoiceExtension):
     def __init__(self, item: Track | Album | Artist | Playlist | list[Track], **kwargs):
@@ -38,7 +37,6 @@ class PlayButton(Button, VoiceExtension):
             action = 'add_track'
             vote_message = f"{member.mention} хочет добавить трек **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Трек **{self.item.title}** был добавлен в очередь."
-            play_message = f"Сейчас играет: **{self.item.title}**!"
 
         elif isinstance(self.item, Album):
             album = await self.item.with_tracks_async()
@@ -51,7 +49,6 @@ class PlayButton(Button, VoiceExtension):
             action = 'add_album'
             vote_message = f"{member.mention} хочет добавить альбом **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Альбом **{self.item.title}** был добавлен в очередь."
-            play_message = f"Сейчас играет: **{self.item.title}**!"
 
         elif isinstance(self.item, Artist):
             artist_tracks = await self.item.get_tracks_async()
@@ -64,7 +61,6 @@ class PlayButton(Button, VoiceExtension):
             action = 'add_artist'
             vote_message = f"{member.mention} хочет добавить треки от **{self.item.name}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Песни артиста **{self.item.name}** были добавлены в очередь."
-            play_message = f"Сейчас играет: **{self.item.name}**!"
 
         elif isinstance(self.item, Playlist):
             short_tracks = await self.item.fetch_tracks_async()
@@ -77,7 +73,6 @@ class PlayButton(Button, VoiceExtension):
             action = 'add_playlist'
             vote_message = f"{member.mention} хочет добавить плейлист **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
             response_message = f"Плейлист **{self.item.title}** был добавлен в очередь."
-            play_message = f"Сейчас играет: **{self.item.title}**!"
 
         elif isinstance(self.item, list):
             tracks = self.item.copy()
@@ -122,14 +117,14 @@ class PlayButton(Button, VoiceExtension):
                 track = tracks.pop(0)
                 self.db.modify_track(gid, tracks, 'next', 'extend')
                 await self.play_track(interaction, track)
-                response_message = f"Сейчас играет: **{tracks[0].title}**!"
+                response_message = f"Сейчас играет: **{track.title}**!"
             
             current_player = None
             if guild['current_player']:
                 current_player = await self.get_player_message(interaction, guild['current_player'])
 
             if current_player and interaction.message:
-                logging.debug(f"Deleting interaction message '{interaction.message.id}': current player '{current_player.id}' found")
+                logging.debug(f"Deleting interaction message {interaction.message.id}: current player {current_player.id} found")
                 await interaction.message.delete()
             else:
                 await interaction.respond(response_message, delete_after=15)
@@ -163,25 +158,3 @@ class ListenView(View):
             # self.add_item(self.button1)  # Discord doesn't allow well formed URLs in buttons for some reason.
             self.add_item(self.button2)
             self.add_item(self.button3)
-
-async def generate_item_embed(item: Track | Album | Artist | Playlist) -> Embed:
-    """Generate item embed.
-
-    Args:
-        item (yandex_music.Track | yandex_music.Album | yandex_music.Artist | yandex_music.Playlist): Item to be processed.
-
-    Returns:
-        discord.Embed: Item embed.
-    """
-    logging.debug(f"Generating embed for type: '{type(item).__name__}'")
-
-    if isinstance(item, Track):
-        return await generate_track_embed(item)
-    elif isinstance(item, Album):
-        return await generate_album_embed(item)
-    elif isinstance(item, Artist):
-        return await generate_artist_embed(item)
-    elif isinstance(item, Playlist):
-        return await generate_playlist_embed(item)
-    else:
-        raise ValueError(f"Unknown item type: {type(item).__name__}")
