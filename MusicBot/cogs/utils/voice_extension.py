@@ -27,6 +27,7 @@ class VoiceExtension:
         Returns:
            bool: True if updated, False if not.
         """
+        from MusicBot.ui import MenuView
         logging.debug(
             f"Updating player embed using " +
             "interaction context" if isinstance(ctx, Interaction) else
@@ -41,7 +42,7 @@ class VoiceExtension:
             logging.warning("Guild ID or User ID not found in context inside 'update_player_embed'")
             return False
 
-        player = await self.get_player_message(ctx, player_mid)
+        player = await self.get_menu_message(ctx, player_mid)
         if not player:
             return False
         
@@ -63,14 +64,14 @@ class VoiceExtension:
 
         if isinstance(ctx, Interaction) and ctx.message and ctx.message.id == player_mid:
             # If interaction from player buttons
-            await ctx.edit(embed=embed)
+            await ctx.edit(embed=embed, view=await MenuView(ctx).init())
         else:
             # If interaction from other buttons or commands. They should have their own response.
-            await player.edit(embed=embed)
+            await player.edit(embed=embed, view=await MenuView(ctx).init())
 
         return True
 
-    async def get_player_message(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, player_mid: int) -> discord.Message | None:
+    async def get_menu_message(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, player_mid: int) -> discord.Message | None:
         """Fetch the player message by its id. Return the message if found, None if not.
         Reset `current_player` field in the database if not found.
 
@@ -369,7 +370,7 @@ class VoiceExtension:
 
         return None
 
-    async def get_likes(self, ctx: ApplicationContext | Interaction) -> list[TrackShort] | None:
+    async def get_likes(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> list[TrackShort] | None:
         """Get liked tracks. Return list of tracks on success.
            Return None if no token found.
         
@@ -380,12 +381,14 @@ class VoiceExtension:
            list[Track] | None: List of tracks or None.
         """
         
-        if not ctx.guild or not ctx.user:
-            logging.warning("Guild or User not found in context inside 'like_track'")
+        gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        if not gid or not uid:
+            logging.warning("Guild ID or User ID not found in context inside 'play_track'")
             return None
 
-        current_track = self.db.get_track(ctx.guild.id, 'current')
-        token = self.users_db.get_ym_token(ctx.user.id)
+        current_track = self.db.get_track(gid, 'current')
+        token = self.users_db.get_ym_token(uid)
         if not current_track or not token:
             logging.debug("Current track or token not found")
             return None

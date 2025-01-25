@@ -140,7 +140,7 @@ class LyricsButton(Button, VoiceExtension):
 
 class MenuView(View, VoiceExtension):
     
-    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
+    def __init__(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = False):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
         if not ctx.guild_id:
@@ -167,7 +167,7 @@ class MenuView(View, VoiceExtension):
         self.add_item(self.next_button)
         self.add_item(self.shuffle_button)
         
-        if len(cast(VoiceChannel, self.ctx.channel).members) > 2:
+        if isinstance(self.ctx, RawReactionActionEvent) or len(cast(VoiceChannel, self.ctx.channel).members) > 2:
             self.like_button.disabled = True
         elif likes and current_track and str(current_track['id']) in [str(like.id) for like in likes]:
             self.like_button.style = ButtonStyle.success
@@ -179,3 +179,17 @@ class MenuView(View, VoiceExtension):
         self.add_item(self.lyrics_button)
 
         return self
+
+    async def on_timeout(self) -> None:
+        logging.debug('Menu timed out...')
+        if not self.ctx.guild_id:
+            return
+        
+        if self.guild['current_player']:
+            self.db.update(self.ctx.guild_id, {'current_player': None, 'previous_tracks': []})
+            message = await self.get_menu_message(self.ctx, self.guild['current_player'])
+            if message:
+                await message.delete()
+                logging.debug('Successfully deleted menu message')
+            else:
+                logging.debug('No menu message found')

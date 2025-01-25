@@ -18,9 +18,55 @@ from MusicBot.cogs.utils.embeds import generate_item_embed
 def setup(bot):
     bot.add_cog(General(bot))
 
+async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
+    if not ctx.interaction.user or not ctx.value:
+        return []
+    
+    users_db = BaseUsersDatabase()
+    token = users_db.get_ym_token(ctx.interaction.user.id)
+    if not token:
+        return ['❌ Укажите токен через /account login.']
+
+    try:
+        client = await YMClient(token).init()
+    except yandex_music.exceptions.UnauthorizedError:
+        logging.info(f"User {ctx.interaction.user.id} provided invalid token")
+        return ['❌ Недействительный токен.']
+    
+    content_type = ctx.options['тип']
+    search = await client.search(ctx.value)
+    if not search:
+        logging.warning(f"Failed to search for '{ctx.value}' for user {ctx.interaction.user.id}")
+        return ["❌ Что-то пошло не так. Повторите попытку позже"]
+    
+    res = []
+    logging.debug(f"Searching for '{ctx.value}' for user {ctx.interaction.user.id}")
+    
+    if content_type == 'Трек' and search.tracks:
+        for item in search.tracks.results:
+            res.append(f"{item.title} {f"({item.version})" if item.version else ''} - {", ".join(item.artists_name())}")
+    elif content_type == 'Альбом' and search.albums:
+        for item in search.albums.results:
+            res.append(f"{item.title} - {", ".join(item.artists_name())}")
+    elif content_type == 'Артист' and search.artists:
+        for item in search.artists.results:
+            res.append(f"{item.name}")
+    elif content_type == 'Плейлист' and search.playlists:
+        for item in search.playlists.results:
+            res.append(f"{item.title}")
+    elif content_type == "Свой плейлист":
+        if not client.me or not client.me.account or not client.me.account.uid:
+            logging.warning(f"Failed to get playlists for user {ctx.interaction.user.id}")
+            return ["❌ Что-то пошло не так. Повторите попытку позже"]
+        
+        playlists_list = await client.users_playlists_list(client.me.account.uid)
+        res = [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
+
+    return res
+
 class General(Cog):
     
-    def __init__(self, bot):
+    def __init__(self, bot: discord.Bot):
         self.bot = bot
         self.db = BaseGuildsDatabase()
         self.users_db = BaseUsersDatabase()
@@ -36,6 +82,7 @@ class General(Cog):
     )
     async def help(self, ctx: discord.ApplicationContext, command: str) -> None:
         logging.info(f"Help command invoked by {ctx.user.id} for command '{command}'")
+
         response_message = None
         embed = discord.Embed(
             title='Помощь',
@@ -45,60 +92,76 @@ class General(Cog):
         embed.description = '__Использование__\n'
 
         if command == 'all':
-            embed.description = ("Данный бот позволяет вам слушать музыку из вашего аккаунта Yandex Music.\n"
-                                "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
-                                "Для получения помощи для конкретной команды, введите /help <команда>.\n\n"
-                                "**Для доп. помощи, зайдите на [сервер любителей Яндекс Музыки](https://discord.gg/gkmFDaPMeC).**")
+            embed.description = (
+                "Этот бот позволяет слушать музыку из вашего аккаунта Yandex Music.\n"
+                "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
+                "Для получения помощи по конкретной команде, введите /help <команда>.\n\n"
+                "**Для дополнительной помощи, присоединяйтесь к [серверу любителей Яндекс Музыки](https://discord.gg/gkmFDaPMeC).**"
+            )
 
             embed.add_field(
                 name='__Основные команды__',
-                value="""
-                `account`
+                value="""`account`
                 `find`
                 `help`
                 `like`
                 `queue`
                 `settings`
                 `track`
-                `voice`
-                """
+                `voice`"""
             )
 
             embed.set_footer(text='©️ Bananchiki')
         elif command == 'account':
-            embed.description += ("Ввести токен от Яндекс Музыки. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
-                                "```/account login <token>```\n"
-                                "Удалить токен из датабазы бота.\n```/account remove```\n"
-                                "Получить ваши плейлисты. Чтобы добавить плейлист в очередь, используйте команду /find.\n```/account playlists```\n"
-                                "Получить плейлист «Мне нравится». \n```/account likes```\n")
+            embed.description += (
+                "Ввести токен от Яндекс Музыки. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
+                "```/account login <token>```\n"
+                "Удалить токен из базы данных бота.\n```/account remove```\n"
+                "Получить ваши плейлисты. Чтобы добавить плейлист в очередь, используйте команду /find.\n```/account playlists```\n"
+                "Получить плейлист «Мне нравится».\n```/account likes```\n"
+            )
         elif command == 'find':
-            embed.description += ("Вывести информацию о треке (по умолчанию), альбоме, авторе или плейлисте. Позволяет добавить музыку в очередь. "
-                                "В названии можно уточнить автора или версию. Возвращается лучшее совпадение.\n```/find <название> <тип>```")
+            embed.description += (
+                "Вывести информацию о треке (по умолчанию), альбоме, авторе или плейлисте. Позволяет добавить музыку в очередь. "
+                "В названии можно уточнить автора или версию. Возвращается лучшее совпадение.\n```/find <название> <тип>```"
+            )
         elif command == 'help':
-            embed.description += ("Вывести список всех команд.\n```/help```\n"
-                                "Получить информацию о конкретной команде.\n```/help <команда>```")
+            embed.description += (
+                "Вывести список всех команд.\n```/help```\n"
+                "Получить информацию о конкретной команде.\n```/help <команда>```"
+            )
         elif command == 'like':
-            embed.description += "Добавить трек в плейлист «Мне нравится». Пользовательские треки из этого плейлиста игнорируются.\n```/like```"
+            embed.description += (
+                "Добавить трек в плейлист «Мне нравится». Пользовательские треки из этого плейлиста игнорируются.\n```/like```"
+            )
         elif command == 'queue':
-            embed.description += ("Получить очередь треков. По 15 элементов на страницу.\n```/queue get```\n"
-                                "Очистить очередь треков и историю прослушивания. Доступно только если вы единственный в голосовом канале"
-                                "или имеете разрешение управления каналом.\n```/queue clear```\n")
+            embed.description += (
+                "Получить очередь треков. По 15 элементов на страницу.\n```/queue get```\n"
+                "Очистить очередь треков и историю прослушивания. Доступно только если вы единственный в голосовом канале "
+                "или имеете разрешение управления каналом.\n```/queue clear```\n"
+            )
         elif command == 'settings':
-            embed.description += ("Получить текущие настройки.\n```/settings show```\n"
-                                  "Разрешить или запретить воспроизведение Explicit треков и альбомов. Если автор или плейлист содержат Explicit треки, убираются кнопки для доступа к ним.\n```/settings explicit```\n"
-                                  "Разрешить или запретить создание меню проигрывателя, когда в канале больше одного человека.\n```/settings menu```\n"
-                                  "Разрешить или запретить голосование.\n```/settings vote <тип голосования>```\n"
-                                  "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки.")
+            embed.description += (
+                "Получить текущие настройки.\n```/settings show```\n"
+                "Разрешить или запретить воспроизведение Explicit треков и альбомов. Если автор или плейлист содержат Explicit треки, убираются кнопки для доступа к ним.\n```/settings explicit```\n"
+                "Разрешить или запретить создание меню проигрывателя, когда в канале больше одного человека.\n```/settings menu```\n"
+                "Разрешить или запретить голосование.\n```/settings vote <тип голосования>```\n"
+                "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки."
+            )
         elif command == 'track':
-            embed.description += ("`Примечание`: Если вы один в голосовом канале или имеете разрешение управления каналом, голосование не начинается.\n\n"
-                                "Переключиться на следующий трек в очереди. \n```/track next```\n"
-                                "Приостановить текущий трек.\n ```/track pause```\n"
-                                "Возобновить текущий трек.\n ```/track resume```\n"
-                                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```")
+            embed.description += (
+                "`Примечание`: Если вы один в голосовом канале или имеете разрешение управления каналом, голосование не начинается.\n\n"
+                "Переключиться на следующий трек в очереди. \n```/track next```\n"
+                "Приостановить текущий трек.\n ```/track pause```\n"
+                "Возобновить текущий трек.\n ```/track resume```\n"
+                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```"
+            )
         elif command == 'voice':
-            embed.description += ("Присоединить бота в голосовой канал. Требует разрешения управления каналом.\n ```/voice join```\n"
-                                "Заставить бота покинуть голосовой канал. Требует разрешения управления каналом.\n ```/voice leave```\n"
-                                "Создать меню проигрывателя. Доступность зависит от настроек сервера. По умолчанию работает только когда в канале один человек.\n```/voice menu```")
+            embed.description += (
+                "Присоединить бота в голосовой канал. Требует разрешения управления каналом.\n ```/voice join```\n"
+                "Заставить бота покинуть голосовой канал. Требует разрешения управления каналом.\n ```/voice leave```\n"
+                "Создать меню проигрывателя. Доступность зависит от настроек сервера. По умолчанию работает только когда в канале один человек.\n```/voice menu```"
+            )
         else:
             response_message = '❌ Неизвестная команда.'
             embed = None
@@ -160,43 +223,52 @@ class General(Cog):
     @account.command(description="Получить ваши плейлисты.")
     async def playlists(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"Playlists command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
+
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
             await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
             return
+
         client = await YMClient(token).init()
         if not client.me or not client.me.account or not client.me.account.uid:
             await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
             return
+
         playlists_list = await client.users_playlists_list(client.me.account.uid)
         playlists: list[tuple[str, int]] = [
             (playlist.title if playlist.title else 'Без названия', playlist.track_count if playlist.track_count else 0) for playlist in playlists_list
         ]
+
         self.users_db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
         embed = generate_playlists_embed(0, playlists)
+
         logging.info(f"Successfully fetched playlists for user {ctx.user.id}")
         await ctx.respond(embed=embed, view=MyPlaylists(ctx), ephemeral=True)
-    
+
+    discord.Option
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
-        "name",
-        description="Название контента для поиска (По умолчанию трек).",
-        type=discord.SlashCommandOptionType.string
-    )
-    @discord.option(
-        "content_type",
-        description="Тип искомого контента.",
+        "тип",
+        parameter_name='content_type',
+        description="Тип контента для поиска.",
         type=discord.SlashCommandOptionType.string,
         choices=['Трек', 'Альбом', 'Артист', 'Плейлист', 'Свой плейлист'],
-        default='Трек'
+    )
+    @discord.option(
+        "запрос",
+        parameter_name='name',
+        description="Название контента для поиска (По умолчанию трек).",
+        type=discord.SlashCommandOptionType.string,
+        autocomplete=discord.utils.basic_autocomplete(get_search_suggestions)
     )
     async def find(
         self,
         ctx: discord.ApplicationContext,
-        name: str,
-        content_type: Literal['Трек', 'Альбом', 'Артист', 'Плейлист', 'Свой плейлист'] = 'Трек'
+        content_type: Literal['Трек', 'Альбом', 'Артист', 'Плейлист', 'Свой плейлист'],
+        name: str
     ) -> None:
         logging.info(f"Find command invoked by user {ctx.user.id} in guild {ctx.guild_id} for '{content_type}' with name '{name}'")
+
         guild = self.db.get_guild(ctx.guild_id)
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:

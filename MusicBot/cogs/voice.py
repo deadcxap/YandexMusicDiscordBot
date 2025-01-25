@@ -59,7 +59,7 @@ class Voice(Cog, VoiceExtension):
         logging.info(f"Reaction added by user {payload.user_id} in channel {payload.channel_id}")
         if not self.typed_bot.user or not payload.member:
             return
-        
+
         bot_id = self.typed_bot.user.id
         if payload.user_id == bot_id:
             return
@@ -76,12 +76,16 @@ class Voice(Cog, VoiceExtension):
             await message.remove_reaction(payload.emoji, payload.member)
             await channel.send("Для участия в голосовании необходимо авторизоваться через /account login.", delete_after=15)
             return
-        
+
         guild_id = payload.guild_id
         if not guild_id:
             return
         guild = self.db.get_guild(guild_id)
         votes = guild['votes']
+
+        if payload.message_id not in votes:
+            logging.info(f"Message {payload.message_id} not found in votes")
+            return
 
         vote_data = votes[str(payload.message_id)]
         if payload.emoji.name == '✅':
@@ -214,7 +218,7 @@ class Voice(Cog, VoiceExtension):
 
         if guild['current_player']:
             logging.info(f"Deleteing old player menu {guild['current_player']} in guild {ctx.guild.id}")
-            message = await self.get_player_message(ctx, guild['current_player'])
+            message = await self.get_menu_message(ctx, guild['current_player'])
             if message:
                 await message.delete()
 
@@ -354,7 +358,7 @@ class Voice(Cog, VoiceExtension):
             
             current_player = self.db.get_current_player(ctx.guild.id)
             if current_player:
-                player = await self.get_player_message(ctx, current_player)
+                player = await self.get_menu_message(ctx, current_player)
                 if player:
                     await player.delete()
 

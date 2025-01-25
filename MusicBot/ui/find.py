@@ -121,7 +121,7 @@ class PlayButton(Button, VoiceExtension):
             
             current_player = None
             if guild['current_player']:
-                current_player = await self.get_player_message(interaction, guild['current_player'])
+                current_player = await self.get_menu_message(interaction, guild['current_player'])
 
             if current_player and interaction.message:
                 logging.debug(f"Deleting interaction message {interaction.message.id}: current player {current_player.id} found")
@@ -130,7 +130,7 @@ class PlayButton(Button, VoiceExtension):
                 await interaction.respond(response_message, delete_after=15)
 
 class ListenView(View):
-    def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = None, disable_on_timeout: bool = False):
+    def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = False):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         logging.debug(f"Creating view for type: '{type(item).__name__}'")
 
