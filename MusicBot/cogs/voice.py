@@ -1,13 +1,15 @@
 import logging
+from time import time
 from typing import cast
 
 import discord
 from discord.ext.commands import Cog
 
-from yandex_music import Track, ClientAsync
+import yandex_music.exceptions
+from yandex_music import ClientAsync
 
-from MusicBot.cogs.utils import VoiceExtension, generate_item_embed
-from MusicBot.ui import MenuView, QueueView, generate_queue_embed
+from MusicBot.cogs.utils import VoiceExtension
+from MusicBot.ui import QueueView, generate_queue_embed
 
 def setup(bot: discord.Bot):
     bot.add_cog(Voice(bot))
@@ -29,7 +31,7 @@ class Voice(Cog, VoiceExtension):
         gid = member.guild.id
         guild = self.db.get_guild(gid)
         discord_guild = await self.typed_bot.fetch_guild(gid)
-        current_player = self.db.get_current_player(gid)
+        current_menu = self.db.get_current_menu(gid)
 
         channel = after.channel or before.channel
         if not channel:
@@ -43,12 +45,12 @@ class Voice(Cog, VoiceExtension):
             self.db.update(gid, {'previous_tracks': [], 'next_tracks': [], 'current_track': None, 'is_stopped': True})
             vc.stop()
         elif len(channel.members) > 2 and not guild['always_allow_menu']:
-            if current_player:
+            if current_menu:
                 logging.info(f"Disabling current player for guild {gid} due to multiple members")
 
-                self.db.update(gid, {'current_player': None, 'repeat': False, 'shuffle': False})
+                self.db.update(gid, {'current_menu': None, 'repeat': False, 'shuffle': False})
                 try:
-                    message = await channel.fetch_message(current_player)
+                    message = await channel.fetch_message(current_menu)
                     await message.delete()
                     await channel.send("Меню отключено из-за большого количества участников.", delete_after=15)
                 except (discord.NotFound, discord.Forbidden):
@@ -191,42 +193,16 @@ class Voice(Cog, VoiceExtension):
     @voice.command(name="menu", description="Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"Menu command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
-        if not await self.voice_check(ctx):
-            return
 
         guild = self.db.get_guild(ctx.guild.id)
         channel = cast(discord.VoiceChannel, ctx.channel)
-        embed = None
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
             logging.info(f"Action declined: other members are present in the voice channel")
             await ctx.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
             return
 
-        if guild['current_track']:
-            embed = await generate_item_embed(
-                Track.de_json(
-                    guild['current_track'],
-                    client=ClientAsync()  # type: ignore  # Async client can be used here.
-                )
-            )
-            vc = await self.get_voice_client(ctx)
-            if vc and vc.is_paused():
-                embed.set_footer(text='Приостановлено')
-            else:
-                embed.remove_footer()
-
-        if guild['current_player']:
-            logging.info(f"Deleteing old player menu {guild['current_player']} in guild {ctx.guild.id}")
-            message = await self.get_menu_message(ctx, guild['current_player'])
-            if message:
-                await message.delete()
-
-        interaction = cast(discord.Interaction, await ctx.respond(view=await MenuView(ctx).init(), embed=embed, delete_after=3600))
-        response = await interaction.original_response()
-        self.db.update(ctx.guild.id, {'current_player': response.id})
-
-        logging.info(f"New player menu {response.id} created in guild {ctx.guild.id}")
+        await self.send_menu_message(ctx)
 
     @voice.command(name="join", description="Подключиться к голосовому каналу, в котором вы сейчас находитесь.")
     async def join(self, ctx: discord.ApplicationContext) -> None:
@@ -308,7 +284,7 @@ class Voice(Cog, VoiceExtension):
             if not vc.is_paused():
                 vc.pause()
 
-                player = self.db.get_current_player(ctx.guild.id)
+                player = self.db.get_current_menu(ctx.guild.id)
                 if player:
                     await self.update_menu_embed(ctx, player)
 
@@ -332,7 +308,7 @@ class Voice(Cog, VoiceExtension):
         elif await self.voice_check(ctx) and (vc := await self.get_voice_client(ctx)):
             if vc.is_paused():
                 vc.resume()
-                player = self.db.get_current_player(ctx.guild.id)
+                player = self.db.get_current_menu(ctx.guild.id)
                 if player:
                     await self.update_menu_embed(ctx, player)
                 logging.info(f"Track resumed in guild {ctx.guild.id}")
@@ -353,18 +329,48 @@ class Voice(Cog, VoiceExtension):
             await ctx.respond("❌ Вы не можете остановить воспроизведение, пока в канале находятся другие пользователи.", delete_after=15, ephemeral=True)
 
         elif await self.voice_check(ctx):
-            self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': []})
             await self.stop_playing(ctx)
-            
-            current_player = self.db.get_current_player(ctx.guild.id)
-            if current_player:
-                player = await self.get_menu_message(ctx, current_player)
+
+            current_menu = self.db.get_current_menu(ctx.guild.id)
+            if current_menu:
+                player = await self.get_menu_message(ctx, current_menu)
                 if player:
                     await player.delete()
 
+            self.db.update(ctx.guild.id, {
+                'current_menu': None, 'repeat': False, 'shuffle': False, 'previous_tracks': [], 'next_tracks': [], 'vibing': False
+            })
             logging.info(f"Playback stopped in guild {ctx.guild.id}")
+            
+            guild = self.db.get_guild(ctx.guild_id)
+            if guild['vibing']:
+                user = self.users_db.get_user(ctx.user.id)
+                token = user['ym_token']
+                if not token:
+                    logging.info(f"User {ctx.user.id} has no YM token")
+                    await ctx.respond("❌ Укажите токен через /account login.", ephemeral=True)
+                    return
 
-            self.db.update(ctx.guild.id, {'current_player': None, 'repeat': False, 'shuffle': False})
+                try:
+                    client = await ClientAsync(token).init()
+                except yandex_music.exceptions.UnauthorizedError:
+                    logging.info(f"User {ctx.user.id} provided invalid token")
+                    await ctx.respond('❌ Недействительный токен.')
+                    return
+
+                track = guild['current_track']
+                if not track:
+                    return
+
+                res = await client.rotor_station_feedback_track_finished(
+                    f"{user['vibe_type']}:{user['vibe_id']}",
+                    track['id'],
+                    track['duration_ms'] // 1000,
+                    cast(str, user['vibe_batch_id']),
+                    time()
+                )
+                logging.info(f"User {ctx.user.id} finished vibing with result: {res}")
+                
             await ctx.respond("Воспроизведение остановлено.", delete_after=15, ephemeral=True)
 
     @track.command(description="Переключиться на следующую песню в очереди.")
@@ -433,3 +439,24 @@ class Voice(Cog, VoiceExtension):
         else:
             logging.info(f"Track added to favorites for user {ctx.author.id} in guild {ctx.guild.id}")
             await ctx.respond(f"Трек **{result}** был добавлен в избранное.", delete_after=15, ephemeral=True)
+    
+    @track.command(description="Запустить мою волну по текущему треку.")
+    async def vibe(self, ctx: discord.ApplicationContext) -> None:
+        logging.info(f"Vibe command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
+        if not await self.voice_check(ctx):
+            return
+
+        guild = self.db.get_guild(ctx.guild.id)
+        channel = cast(discord.VoiceChannel, ctx.channel)
+
+        if len(channel.members) > 2 and not guild['always_allow_menu']:
+            logging.info(f"Action declined: other members are present in the voice channel")
+            await ctx.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
+            return
+        if not guild['current_track']:
+            logging.info(f"No current track in {ctx.guild.id}")
+            await ctx.respond("❌ Нет воспроизводимого трека.", ephemeral=True)
+            return
+
+        await self.send_menu_message(ctx)
+        await self.update_vibe(ctx, 'track', guild['current_track']['id'])

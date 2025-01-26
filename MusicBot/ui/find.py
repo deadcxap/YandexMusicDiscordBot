@@ -119,12 +119,12 @@ class PlayButton(Button, VoiceExtension):
                 await self.play_track(interaction, track)
                 response_message = f"Сейчас играет: **{track.title}**!"
             
-            current_player = None
-            if guild['current_player']:
-                current_player = await self.get_menu_message(interaction, guild['current_player'])
+            current_menu = None
+            if guild['current_menu']:
+                current_menu = await self.get_menu_message(interaction, guild['current_menu'])
 
-            if current_player and interaction.message:
-                logging.debug(f"Deleting interaction message {interaction.message.id}: current player {current_player.id} found")
+            if current_menu and interaction.message:
+                logging.debug(f"Deleting interaction message {interaction.message.id}: current player {current_menu.id} found")
                 await interaction.message.delete()
             else:
                 await interaction.respond(response_message, delete_after=15)

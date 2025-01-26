@@ -144,7 +144,7 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
             track = track.to_dict()
         self.update(gid, {'current_track': track})
     
-    def get_current_player(self, gid: int) -> int | None:
+    def get_current_menu(self, gid: int) -> int | None:
         """Get current player.
         
         Args:
@@ -153,4 +153,4 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         Returns: int | None: Player message id or None if not present.
         """
         guild = self.get_guild(gid)
-        return guild['current_player']
+        return guild['current_menu']

@@ -26,7 +26,10 @@ class BaseUsersDatabase:
             ym_token=None,
             playlists=[],
             playlists_page=0,
-            queue_page=0
+            queue_page=0,
+            vibe_batch_id=None,
+            vibe_type=None,
+            vibe_id=None
         ))
 
     def update(self, uid: int, data: User) -> None:
@@ -54,14 +57,18 @@ class BaseUsersDatabase:
             user = users.find_one({'_id': uid})
         user =  cast(ExplicitUser, user)
         existing_fields = user.keys()
-        fields: User = User(
+        fields: ExplicitUser = ExplicitUser(
+            _id=0,
             ym_token=None,
             playlists=[],
             playlists_page=0,
-            queue_page=0
+            queue_page=0,
+            vibe_batch_id=None,
+            vibe_type=None,
+            vibe_id=None
         )
         for field, default_value in fields.items():
-            if field not in existing_fields and field != '_id':
+            if field not in existing_fields:
                 user[field] = default_value
                 users.update_one({'_id': uid}, {"$set": {field: default_value}})
         
@@ -87,7 +94,7 @@ class BaseGuildsDatabase:
             next_tracks=[],
             previous_tracks=[],
             current_track=None,
-            current_player=None,
+            current_menu=None,
             is_stopped=True,
             allow_explicit=True,
             always_allow_menu=False,
@@ -98,7 +105,8 @@ class BaseGuildsDatabase:
             vote_add_playlist=True,
             shuffle=False,
             repeat=False,
-            votes={}
+            votes={},
+            vibing=False
         ))
 
     def update(self, gid: int, data: Guild) -> None:
@@ -127,11 +135,12 @@ class BaseGuildsDatabase:
         
         guild = cast(ExplicitGuild, guild)
         existing_fields = guild.keys()
-        fields = Guild(
+        fields = ExplicitGuild(
+            _id=0,
             next_tracks=[],
             previous_tracks=[],
             current_track=None,
-            current_player=None,
+            current_menu=None,
             is_stopped=True,
             allow_explicit=True,
             always_allow_menu=False,
@@ -142,10 +151,11 @@ class BaseGuildsDatabase:
             vote_add_playlist=True,
             shuffle=False,
             repeat=False,
-            votes={}
+            votes={},
+            vibing=False
         )
         for field, default_value in fields.items():
-            if field not in existing_fields and field != '_id':
+            if field not in existing_fields:
                 guild[field] = default_value
                 guilds.update_one({'_id': gid}, {"$set": {field: default_value}})
         

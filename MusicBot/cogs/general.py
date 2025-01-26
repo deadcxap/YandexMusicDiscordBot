@@ -316,7 +316,7 @@ class General(Cog):
         
             if not result:
                 logging.warning(f"Failed to search for '{name}' for user {ctx.user.id}")
-                await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже", delete_after=15, ephemeral=True)
+                await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже.", delete_after=15, ephemeral=True)
                 return
 
             if content_type == 'Трек':

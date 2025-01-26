@@ -69,7 +69,7 @@ class NextTrackButton(Button, VoiceExtension):
         logging.info('Next track button callback...')
         if not await self.voice_check(interaction):
             return
-        title = await self.next_track(interaction)
+        title = await self.next_track(interaction, button_callback=True)
         if not title:
             await interaction.respond(f"Нет треков в очереди.", delete_after=15, ephemeral=True)
 
@@ -82,7 +82,7 @@ class PrevTrackButton(Button, VoiceExtension):
         logging.info('Previous track button callback...')
         if not await self.voice_check(interaction):
             return
-        title = await self.prev_track(interaction)
+        title = await self.prev_track(interaction, button_callback=True)
         if not title:
             await interaction.respond(f"Нет треков в истории.", delete_after=15, ephemeral=True)
 
@@ -185,9 +185,9 @@ class MenuView(View, VoiceExtension):
         if not self.ctx.guild_id:
             return
         
-        if self.guild['current_player']:
-            self.db.update(self.ctx.guild_id, {'current_player': None, 'previous_tracks': []})
-            message = await self.get_menu_message(self.ctx, self.guild['current_player'])
+        if self.guild['current_menu']:
+            self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': []})
+            message = await self.get_menu_message(self.ctx, self.guild['current_menu'])
             if message:
                 await message.delete()
                 logging.debug('Successfully deleted menu message')

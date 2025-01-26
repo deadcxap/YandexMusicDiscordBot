@@ -10,7 +10,7 @@ def setup(bot):
 
 class Settings(Cog):
 
-    settings = discord.SlashCommandGroup("settings", "Команды для изменения настроек бота.", guild_ids=[1247100229535141899])
+    settings = discord.SlashCommandGroup("settings", "Команды для изменения настроек бота.")
 
     def __init__(self, bot: discord.Bot):
         self.db = BaseGuildsDatabase()

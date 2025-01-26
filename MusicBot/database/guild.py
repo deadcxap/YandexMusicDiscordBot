@@ -11,7 +11,7 @@ class Guild(TypedDict, total=False):
     next_tracks: list[dict[str, Any]]
     previous_tracks: list[dict[str, Any]]
     current_track: dict[str, Any] | None
-    current_player: int | None
+    current_menu: int | None
     is_stopped: bool
     allow_explicit: bool
     always_allow_menu: bool
@@ -23,13 +23,14 @@ class Guild(TypedDict, total=False):
     shuffle: bool
     repeat: bool
     votes: dict[str, MessageVotes]
+    vibing: bool
 
 class ExplicitGuild(TypedDict):
     _id: int
     next_tracks: list[dict[str, Any]]
     previous_tracks: list[dict[str, Any]]
     current_track: dict[str, Any] | None
-    current_player: int | None
+    current_menu: int | None
     is_stopped: bool  # Prevents the `after` callback of play_track
     allow_explicit: bool
     always_allow_menu: bool
@@ -41,3 +42,4 @@ class ExplicitGuild(TypedDict):
     shuffle: bool
     repeat: bool
     votes: dict[str, MessageVotes]
+    vibing: bool

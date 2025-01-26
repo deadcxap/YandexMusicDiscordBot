@@ -10,7 +10,7 @@ from PIL import Image
 from yandex_music import Track, Album, Artist, Playlist, Label
 from discord import Embed
 
-async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Track]) -> Embed:
+async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Track], vibing: bool = False) -> Embed:
     """Generate item embed.
 
     Args:
@@ -22,17 +22,23 @@ async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Tra
     logging.debug(f"Generating embed for type: '{type(item).__name__}'")
 
     if isinstance(item, Track):
-        return await _generate_track_embed(item)
+        embed = await _generate_track_embed(item)
     elif isinstance(item, Album):
-        return await _generate_album_embed(item)
+        embed = await _generate_album_embed(item)
     elif isinstance(item, Artist):
-        return await _generate_artist_embed(item)
+        embed = await _generate_artist_embed(item)
     elif isinstance(item, Playlist):
-        return await _generate_playlist_embed(item)
+        embed = await _generate_playlist_embed(item)
     elif isinstance(item, list):
-        return _generate_likes_embed(item)
+        embed = _generate_likes_embed(item)
     else:
         raise ValueError(f"Unknown item type: {type(item).__name__}")
+    
+    if vibing:
+        embed.set_image(
+            url="https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExbjd6M3VscnZnMXFlb3NtMHY2Zm5tbTVvMm8yY21nNXhpN214YzhyaCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/7HxhnYcJljc3ON77O3/giphy.gif"
+        )  # TODO: Get better gif
+    return embed
 
 def _generate_likes_embed(tracks: list[Track]) -> Embed:
     track_count = len(tracks)
