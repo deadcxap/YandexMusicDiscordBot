@@ -245,7 +245,6 @@ class General(Cog):
         logging.info(f"Successfully fetched playlists for user {ctx.user.id}")
         await ctx.respond(embed=embed, view=MyPlaylists(ctx), ephemeral=True)
 
-    discord.Option
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
         "тип",

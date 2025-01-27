@@ -106,7 +106,8 @@ class BaseGuildsDatabase:
             shuffle=False,
             repeat=False,
             votes={},
-            vibing=False
+            vibing=False,
+            current_viber_id=None
         ))
 
     def update(self, gid: int, data: Guild) -> None:
@@ -152,7 +153,8 @@ class BaseGuildsDatabase:
             shuffle=False,
             repeat=False,
             votes={},
-            vibing=False
+            vibing=False,
+            current_viber_id=None
         )
         for field, default_value in fields.items():
             if field not in existing_fields:

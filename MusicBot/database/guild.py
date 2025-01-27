@@ -24,6 +24,7 @@ class Guild(TypedDict, total=False):
     repeat: bool
     votes: dict[str, MessageVotes]
     vibing: bool
+    current_viber_id: int | None
 
 class ExplicitGuild(TypedDict):
     _id: int
@@ -43,3 +44,4 @@ class ExplicitGuild(TypedDict):
     repeat: bool
     votes: dict[str, MessageVotes]
     vibing: bool
+    current_viber_id: int | None

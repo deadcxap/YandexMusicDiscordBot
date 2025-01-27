@@ -58,6 +58,10 @@ def _generate_likes_embed(tracks: list[Track]) -> Embed:
 
     duration_m = duration // 60000
     duration_s = ceil(duration / 1000) - duration_m * 60
+    if duration_s == 60:
+        duration_m += 1
+        duration_s = 0
+
     embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
 
     if track_count is not None:
@@ -89,6 +93,9 @@ async def _generate_track_embed(track: Track) -> Embed:
 
     duration_m = duration // 60000
     duration_s = ceil(duration / 1000) - duration_m * 60
+    if duration_s == 60:
+        duration_m += 1
+        duration_s = 0
 
     artist_url = f"https://music.yandex.ru/artist/{artist.id}"
     artist_cover = artist.cover
@@ -184,6 +191,9 @@ async def _generate_album_embed(album: Album) -> Embed:
     if duration:
         duration_m = duration // 60000
         duration_s = ceil(duration / 1000) - duration_m * 60
+        if duration_s == 60:
+            duration_m += 1
+            duration_s = 0
         embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
 
     if track_count is not None:
@@ -291,6 +301,9 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
     if duration:
         duration_m = duration // 60000
         duration_s = ceil(duration / 1000) - duration_m * 60
+        if duration_s == 60:
+            duration_m += 1
+            duration_s = 0
         embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
 
     if track_count is not None:

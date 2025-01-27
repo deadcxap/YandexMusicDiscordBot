@@ -1,9 +1,10 @@
 import logging
 from typing import Self, cast
 
-from discord.ui import View, Button, Item
-from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed
+from discord.ui import View, Button, Item, Modal, Select
+from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed, ComponentType, SelectOption
 
+import yandex_music.exceptions
 from yandex_music import Track, ClientAsync
 from MusicBot.cogs.utils.voice_extension import VoiceExtension
 
@@ -123,8 +124,15 @@ class LyricsButton(Button, VoiceExtension):
             ClientAsync(ym_token),  # type: ignore  # Async client can be used here
         ))
 
-        lyrics = await track.get_lyrics_async()
+        try:
+            lyrics = await track.get_lyrics_async()
+        except yandex_music.exceptions.NotFoundError:
+            logging.debug('Lyrics not found')
+            await interaction.respond("❌ Текст песни не найден. Яндекс нам соврал (опять)!", delete_after=15, ephemeral=True)
+            return
+
         if not lyrics:
+            logging.debug('Lyrics not found')
             return
 
         embed = Embed(
@@ -137,6 +145,36 @@ class LyricsButton(Button, VoiceExtension):
             embed.add_field(name='', value=subtext, inline=False)
         await interaction.respond(embed=embed, ephemeral=True)
 
+class MyVibeButton(Button, VoiceExtension):
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self, None)
+    
+    async def callback(self, interaction: Interaction) -> None:
+        logging.info('[VIBE] My vibe button callback')
+        if not await self.voice_check(interaction):
+            return
+        if not interaction.guild_id:
+            logging.warning('[VIBE] No guild id in button callback')
+            return
+
+        track = self.db.get_track(interaction.guild_id, 'current')
+        if track:
+            logging.info(f"[VIBE] Playing vibe for track '{track["id"]}'")
+            await self.update_vibe(
+                interaction,
+                'track',
+                track['id'],
+                button_callback=True
+            )
+        else:
+            logging.info('[VIBE] Playing on your wave')
+            await self.update_vibe(
+                interaction,
+                'user',
+                'onyourwave',
+                button_callback=True
+            )
 
 class MenuView(View, VoiceExtension):
     
@@ -156,8 +194,9 @@ class MenuView(View, VoiceExtension):
         
         self.like_button = LikeButton(style=ButtonStyle.secondary, emoji='❤️', row=1)
         self.lyrics_button = LyricsButton(style=ButtonStyle.secondary, emoji='📋', row=1)
+        self.vibe_button = MyVibeButton(style=ButtonStyle.secondary, emoji='🌊', row=1)
         
-    async def init(self) -> Self:
+    async def init(self, *, disable: bool = False) -> Self:
         current_track = self.guild['current_track']
         likes = await self.get_likes(self.ctx)
 
@@ -177,6 +216,10 @@ class MenuView(View, VoiceExtension):
 
         self.add_item(self.like_button)
         self.add_item(self.lyrics_button)
+        self.add_item(self.vibe_button)
+
+        if disable:
+            self.disable_all_items()
 
         return self
 
@@ -186,7 +229,7 @@ class MenuView(View, VoiceExtension):
             return
         
         if self.guild['current_menu']:
-            self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': []})
+            self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
             message = await self.get_menu_message(self.ctx, self.guild['current_menu'])
             if message:
                 await message.delete()

@@ -157,7 +157,7 @@ class Voice(Cog, VoiceExtension):
             await message.clear_reactions()
             await message.edit(content='Запрос был отклонён.', delete_after=15)
             del votes[str(payload.message_id)]
-        
+
         self.db.update(guild_id, {'votes': votes})
 
     @Cog.listener()
@@ -165,7 +165,7 @@ class Voice(Cog, VoiceExtension):
         logging.info(f"Reaction removed by user {payload.user_id} in channel {payload.channel_id}")
         if not self.typed_bot.user:
             return
-        
+
         guild_id = payload.guild_id
         if not guild_id:
             return
@@ -187,7 +187,7 @@ class Voice(Cog, VoiceExtension):
         elif payload.emoji.name == '❌':
             logging.info(f"User {payload.user_id} removed negative vote for message {payload.message_id}")
             del vote_data['negative_votes'][payload.user_id]
-        
+
         self.db.update(guild_id, {'votes': votes})
     
     @voice.command(name="menu", description="Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
@@ -231,7 +231,7 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"User {ctx.author.id} does not have permissions to execute leave command in guild {ctx.guild.id}")
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
-        
+
         vc = await self.get_voice_client(ctx)
         if await self.voice_check(ctx) and vc:
             self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': [], 'current_track': None, 'is_stopped': True})
@@ -440,9 +440,9 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"Track added to favorites for user {ctx.author.id} in guild {ctx.guild.id}")
             await ctx.respond(f"Трек **{result}** был добавлен в избранное.", delete_after=15, ephemeral=True)
     
-    @track.command(description="Запустить мою волну по текущему треку.")
-    async def vibe(self, ctx: discord.ApplicationContext) -> None:
-        logging.info(f"Vibe command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
+    @track.command(name='vibe', description="Запустить мою волну по текущему треку.")
+    async def track_vibe(self, ctx: discord.ApplicationContext) -> None:
+        logging.info(f"Vibe (track) command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
         if not await self.voice_check(ctx):
             return
 
@@ -460,3 +460,20 @@ class Voice(Cog, VoiceExtension):
 
         await self.send_menu_message(ctx)
         await self.update_vibe(ctx, 'track', guild['current_track']['id'])
+
+    @discord.slash_command(name='vibe', description="Запустить Мою Волну.")
+    async def user_vibe(self, ctx: discord.ApplicationContext) -> None:
+        logging.info(f"Vibe (user) command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
+        if not await self.voice_check(ctx):
+            return
+
+        guild = self.db.get_guild(ctx.guild.id)
+        channel = cast(discord.VoiceChannel, ctx.channel)
+
+        if len(channel.members) > 2 and not guild['always_allow_menu']:
+            logging.info(f"Action declined: other members are present in the voice channel")
+            await ctx.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
+            return
+
+        await self.send_menu_message(ctx)
+        await self.update_vibe(ctx, 'user', 'onyourwave')
