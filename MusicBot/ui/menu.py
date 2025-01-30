@@ -1,12 +1,12 @@
 import logging
 from typing import Self, cast
 
-from discord.ui import View, Button, Item, Modal, Select
+from discord.ui import View, Button, Item, Select
 from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed, ComponentType, SelectOption
 
 import yandex_music.exceptions
 from yandex_music import Track, ClientAsync
-from MusicBot.cogs.utils.voice_extension import VoiceExtension
+from MusicBot.cogs.utils.voice_extension import VoiceExtension, menu_views
 
 class ToggleRepeatButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -14,13 +14,17 @@ class ToggleRepeatButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Repeat button callback...')
-        if not interaction.guild:
+        logging.info('[MENU] Repeat button callback...')
+        if not await self.voice_check(interaction) or not interaction.guild:
             return
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
         self.db.update(gid, {'repeat': not guild['repeat']})
-        await interaction.edit(view=await MenuView(interaction).init())
+
+        if gid in menu_views:
+            menu_views[gid].stop()
+        menu_views[gid] = await MenuView(interaction).init()
+        await interaction.edit(view=menu_views[gid])
 
 class ToggleShuffleButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -28,13 +32,17 @@ class ToggleShuffleButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Shuffle button callback...')
-        if not interaction.guild:
+        logging.info('[MENU] Shuffle button callback...')
+        if not await self.voice_check(interaction) or not interaction.guild:
             return
         gid = interaction.guild.id
         guild = self.db.get_guild(gid)
         self.db.update(gid, {'shuffle': not guild['shuffle']})
-        await interaction.edit(view=await MenuView(interaction).init())
+
+        if gid in menu_views:
+            menu_views[gid].stop()
+        menu_views[gid] = await MenuView(interaction).init()
+        await interaction.edit(view=menu_views[gid])
 
 class PlayPauseButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -42,7 +50,7 @@ class PlayPauseButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Play/Pause button callback...')
+        logging.info('[MENU] Play/Pause button callback...')
         if not await self.voice_check(interaction):
             return
 
@@ -67,7 +75,7 @@ class NextTrackButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Next track button callback...')
+        logging.info('[MENU] Next track button callback...')
         if not await self.voice_check(interaction):
             return
         title = await self.next_track(interaction, button_callback=True)
@@ -80,7 +88,7 @@ class PrevTrackButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Previous track button callback...')
+        logging.info('[MENU] Previous track button callback...')
         if not await self.voice_check(interaction):
             return
         title = await self.prev_track(interaction, button_callback=True)
@@ -93,15 +101,23 @@ class LikeButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
 
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Like button callback...')
+        logging.info('[MENU] Like button callback...')
         if not await self.voice_check(interaction):
             return
-        
+
+        if not interaction.guild:
+            return
+        gid = interaction.guild.id
+
         if not (vc := await self.get_voice_client(interaction)) or not vc.is_playing:
             await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
 
         await self.like_track(interaction)
-        await interaction.edit(view=await MenuView(interaction).init())
+
+        if gid in menu_views:
+            menu_views[gid].stop()
+        menu_views[gid] = await MenuView(interaction).init()
+        await interaction.edit(view=menu_views[gid])
 
 class LyricsButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -109,7 +125,7 @@ class LyricsButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
         
     async def callback(self, interaction: Interaction) -> None:
-        logging.info('Lyrics button callback...')
+        logging.info('[MENU] Lyrics button callback...')
 
         if not await self.voice_check(interaction) or not interaction.guild_id or not interaction.user:
             return
@@ -127,12 +143,12 @@ class LyricsButton(Button, VoiceExtension):
         try:
             lyrics = await track.get_lyrics_async()
         except yandex_music.exceptions.NotFoundError:
-            logging.debug('Lyrics not found')
+            logging.debug('[MENU] Lyrics not found')
             await interaction.respond("❌ Текст песни не найден. Яндекс нам соврал (опять)!", delete_after=15, ephemeral=True)
             return
 
         if not lyrics:
-            logging.debug('Lyrics not found')
+            logging.debug('[MENU] Lyrics not found')
             return
 
         embed = Embed(
@@ -160,7 +176,7 @@ class MyVibeButton(Button, VoiceExtension):
 
         track = self.db.get_track(interaction.guild_id, 'current')
         if track:
-            logging.info(f"[VIBE] Playing vibe for track '{track["id"]}'")
+            logging.info(f"[MENU] Playing vibe for track '{track["id"]}'")
             await self.update_vibe(
                 interaction,
                 'track',
@@ -175,6 +191,119 @@ class MyVibeButton(Button, VoiceExtension):
                 'onyourwave',
                 button_callback=True
             )
+
+class MyVibeSelect(Select, VoiceExtension):
+    def __init__(self, *args,  **kwargs):
+        super().__init__(*args, **kwargs)
+        VoiceExtension.__init__(self, None)
+    
+    async def callback(self, interaction: Interaction) -> None:
+        logging.info('[VIBE] My vibe select callback')
+        if not interaction.user:
+            logging.warning('[VIBE] No user in select callback')
+            return
+        
+        custom_id = interaction.custom_id
+        if custom_id not in ('diversity', 'mood', 'lang'):
+            logging.warning(f'[VIBE] Unknown custom_id: {custom_id}')
+            return
+
+        data = interaction.data
+        if not data or 'values' not in data:
+            logging.warning('[VIBE] No data in select callback')
+            return
+        
+        data_value = data['values'][0]
+        if data_value not in (
+            'fun', 'active', 'calm', 'sad', 'all',
+            'favorite', 'popular', 'discover', 'default',
+            'not-russian', 'russian', 'without-words', 'any'
+        ):
+            logging.warning(f'[VIBE] Unknown data_value: {data_value}')
+            return
+
+        logging.info(f"[VIBE] Settings option '{custom_id}' updated to {data_value}")
+        self.users_db.update(interaction.user.id, {f'vibe_settings.{custom_id}': data_value})
+        
+        view = MyVibeSettingsView(interaction)
+        view.disable_all_items()
+        await interaction.edit(view=view)
+
+        await self.update_vibe(interaction, 'user', 'onyourwave', update_settings=True)
+        view.enable_all_items()
+        await interaction.edit(view=view)
+
+class MyVibeSettingsView(View, VoiceExtension):
+    def __init__(self, interaction: Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
+        View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
+        VoiceExtension.__init__(self, None)
+
+        if not interaction.user:
+            logging.warning('[VIBE] No user in settings view')
+            return
+
+        settings = self.users_db.get_user(interaction.user.id)['vibe_settings']
+        
+        diversity_settings = settings['diversity']
+        diversity = [
+            SelectOption(label='Любое', value='default'),
+            SelectOption(label='Любимое', value='favorite', default=diversity_settings == 'favorite'),
+            SelectOption(label='Незнакомое', value='discover', default=diversity_settings == 'discover'),
+            SelectOption(label='Популярное', value='popular', default=diversity_settings == 'popular')
+        ]
+        
+        mood_settings = settings['mood']
+        mood = [
+            SelectOption(label='Любое', value='all'),
+            SelectOption(label='Бодрое', value='active', default=mood_settings == 'active'),
+            SelectOption(label='Весёлое', value='fun', default=mood_settings == 'fun'),
+            SelectOption(label='Спокойное', value='calm', default=mood_settings == 'calm'),
+            SelectOption(label='Грустное', value='sad', default=mood_settings == 'sad')
+        ]
+        
+        lang_settings = settings['lang']
+        lang = [
+            SelectOption(label='Любое', value='any'),
+            SelectOption(label='Русский', value='russian', default=lang_settings == 'russian'),
+            SelectOption(label='Иностранный', value='not-russian', default=lang_settings == 'not-russian'),
+            SelectOption(label='Без слов', value='without-words', default=lang_settings == 'without-words')
+        ]
+
+        feel_select = MyVibeSelect(
+            ComponentType.string_select,
+            placeholder='По характеру',
+            options=diversity,
+            row=0,
+            custom_id='diversity'
+        )
+        mood_select = MyVibeSelect(
+            ComponentType.string_select,
+            placeholder='По настроению',
+            options=mood,
+            row=1,
+            custom_id='mood'
+        )
+        lang_select = MyVibeSelect(
+            ComponentType.string_select,
+            placeholder='По языку',
+            options=lang,
+            row=2,
+            custom_id='lang'
+        )
+        for select in [feel_select, mood_select, lang_select]:
+            self.add_item(select)
+
+class MyVibeSettingsButton(Button, VoiceExtension):
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self, None)
+    
+    async def callback(self, interaction: Interaction) -> None:
+        logging.info('[VIBE] My vibe settings button callback')
+        if not await self.voice_check(interaction) or not interaction.user:
+            return
+        
+        await interaction.respond('Настройки "Моей Волны"', view=MyVibeSettingsView(interaction), ephemeral=True)
 
 class MenuView(View, VoiceExtension):
     
@@ -195,6 +324,7 @@ class MenuView(View, VoiceExtension):
         self.like_button = LikeButton(style=ButtonStyle.secondary, emoji='❤️', row=1)
         self.lyrics_button = LyricsButton(style=ButtonStyle.secondary, emoji='📋', row=1)
         self.vibe_button = MyVibeButton(style=ButtonStyle.secondary, emoji='🌊', row=1)
+        self.vibe_settings_button = MyVibeSettingsButton(style=ButtonStyle.success, emoji='🛠', row=1)
         
     async def init(self, *, disable: bool = False) -> Self:
         current_track = self.guild['current_track']
@@ -216,7 +346,11 @@ class MenuView(View, VoiceExtension):
 
         self.add_item(self.like_button)
         self.add_item(self.lyrics_button)
-        self.add_item(self.vibe_button)
+        
+        if self.guild['vibing']:
+            self.add_item(self.vibe_settings_button)
+        else:
+            self.add_item(self.vibe_button)
 
         if disable:
             self.disable_all_items()
@@ -229,6 +363,7 @@ class MenuView(View, VoiceExtension):
             return
         
         if self.guild['current_menu']:
+            await self.stop_playing(self.ctx)
             self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
             message = await self.get_menu_message(self.ctx, self.guild['current_menu'])
             if message:

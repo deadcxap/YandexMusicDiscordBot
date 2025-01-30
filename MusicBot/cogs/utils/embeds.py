@@ -36,8 +36,8 @@ async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Tra
     
     if vibing:
         embed.set_image(
-            url="https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExbjd6M3VscnZnMXFlb3NtMHY2Zm5tbTVvMm8yY21nNXhpN214YzhyaCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/7HxhnYcJljc3ON77O3/giphy.gif"
-        )  # TODO: Get better gif
+            url="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExaWN5dG50YWtxeDcwNnZpaDdqY3A3bHBsYXkyb29rdXoyajNjdWMxYiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/IilXmX8tjwfXgSwjBr/giphy.gif"
+        )
     return embed
 
 def _generate_likes_embed(tracks: list[Track]) -> Embed:

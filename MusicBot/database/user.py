@@ -1,4 +1,10 @@
-from typing import TypedDict, Literal
+from typing import TypedDict, TypeAlias, Literal
+
+VibeSettingsOptions: TypeAlias = Literal[
+    'active', 'fun', 'calm', 'sad', 'all',
+    'favorite', 'discover', 'popular', 'default',
+    'russian', 'not-russian', 'without-words', 'any',
+]
 
 class User(TypedDict, total=False):
     ym_token: str | None
@@ -8,6 +14,7 @@ class User(TypedDict, total=False):
     vibe_batch_id: str | None
     vibe_type: Literal['track', 'album', 'artist', 'playlist', 'user'] | None
     vibe_id: str | int | None
+    vibe_settings: dict[Literal['mood', 'diversity', 'lang'], VibeSettingsOptions]
 
 class ExplicitUser(TypedDict):
     _id: int
@@ -18,3 +25,4 @@ class ExplicitUser(TypedDict):
     vibe_batch_id: str | None
     vibe_type: Literal['track', 'album', 'artist', 'playlist', 'user'] | None
     vibe_id: str | int | None
+    vibe_settings: dict[Literal['mood', 'diversity', 'lang'], VibeSettingsOptions]

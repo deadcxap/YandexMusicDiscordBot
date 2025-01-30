@@ -133,24 +133,13 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         self.update(gid, {'next_tracks': tracks})
         return track
     
-    def set_current_track(self, gid: int, track: Track | dict[str, Any]) -> None:
-        """Set current track.
-
-        Args:
-            gid (int): Guild id.
-            track (Track | dict[str, Any]): Track or dictionary covertable to yandex_music.Track.
-        """
-        if isinstance(track, Track):
-            track = track.to_dict()
-        self.update(gid, {'current_track': track})
-    
     def get_current_menu(self, gid: int) -> int | None:
-        """Get current player.
+        """Get current menu.
         
         Args:
             gid (int): Guild id.
         
-        Returns: int | None: Player message id or None if not present.
+        Returns: int | None: Menu message id or None if not present.
         """
         guild = self.get_guild(gid)
         return guild['current_menu']

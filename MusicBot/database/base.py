@@ -1,6 +1,6 @@
 """This documents initialises databse and contains methods to access it."""
 
-from typing import cast
+from typing import Any, cast
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -29,15 +29,20 @@ class BaseUsersDatabase:
             queue_page=0,
             vibe_batch_id=None,
             vibe_type=None,
-            vibe_id=None
+            vibe_id=None,
+            vibe_settings={
+                'mood': 'all',
+                'diversity': 'default',
+                'lang': 'any'
+            }
         ))
 
-    def update(self, uid: int, data: User) -> None:
+    def update(self, uid: int, data: User | dict[Any, Any]) -> None:
         """Update user record.
 
         Args:
             uid (int): User id.
-            data (dict[Any, Any]): Updated data.
+            data (User | dict[Any, Any]): Updated data.
         """
         self.get_user(uid)
         users.update_one({'_id': uid}, {"$set": data})
@@ -65,7 +70,12 @@ class BaseUsersDatabase:
             queue_page=0,
             vibe_batch_id=None,
             vibe_type=None,
-            vibe_id=None
+            vibe_id=None,
+            vibe_settings={
+                'mood': 'all',
+                'diversity': 'default',
+                'lang': 'any'
+            }
         )
         for field, default_value in fields.items():
             if field not in existing_fields:
