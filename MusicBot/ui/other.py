@@ -2,12 +2,7 @@ from math import ceil
 from typing import Any
 
 from discord.ui import View, Button, Item
-from discord import ButtonStyle, Interaction, Embed
-
-from MusicBot.cogs.utils.voice_extension import VoiceExtension
-
-from discord.ui import View, Button, Item
-from discord import ButtonStyle, Interaction, ApplicationContext
+from discord import ApplicationContext, ButtonStyle, Interaction, Embed
 
 from MusicBot.cogs.utils.voice_extension import VoiceExtension
 
@@ -71,7 +66,7 @@ class MPPrevButton(Button, VoiceExtension):
         await interaction.edit(embed=embed, view=MyPlaylists(interaction))
 
 class MyPlaylists(View, VoiceExtension):
-    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
+    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
         if not ctx.user:
@@ -121,7 +116,7 @@ class QueuePrevButton(Button, VoiceExtension):
         await interaction.edit(embed=embed, view=QueueView(interaction))
 
 class QueueView(View, VoiceExtension):
-    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = True):
+    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
         if not ctx.user or not ctx.guild:

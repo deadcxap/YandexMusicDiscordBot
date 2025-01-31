@@ -11,7 +11,7 @@ from discord.ui import View
 from discord import Interaction, ApplicationContext, RawReactionActionEvent
 
 from MusicBot.cogs.utils import generate_item_embed
-from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
+from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase, ExplicitGuild
 
 # TODO: RawReactionActionEvent is poorly supported.
 
@@ -277,7 +277,7 @@ class VoiceExtension:
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
             logging.debug(f"[VC_EXT] No token found for user {ctx.user.id}")
-            await ctx.respond("❌ Необходимо указать свой токен доступа с помощью команды /login.", delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return False
 
         if not isinstance(ctx.channel, discord.VoiceChannel):
@@ -389,32 +389,22 @@ class VoiceExtension:
 
         self.db.update(gid, {'current_track': track.to_dict()})
         guild = self.db.get_guild(gid)
-        if guild['current_menu'] and not isinstance(ctx, RawReactionActionEvent):
-            if menu_message:
-                try:
-                    if gid in menu_views:
-                        menu_views[gid].stop()
-                    menu_views[gid] = await MenuView(ctx).init()
-                    await menu_message.edit(embed=await generate_item_embed(track, guild['vibing']), view=menu_views[gid])
-                except discord.errors.NotFound:
-                    logging.warning("[VC_EXT] Menu message not found. Using 'update_menu_embed' instead.")
-                    await self._retry_update_menu_embed(ctx, guild['current_menu'], button_callback)
-            else:
-                await self._retry_update_menu_embed(ctx, guild['current_menu'], button_callback)
 
         try:
-            await track.download_async(f'music/{gid}.mp3')
-            song = discord.FFmpegPCMAudio(f'music/{gid}.mp3', options='-vn -filter:a "volume=0.15"')
-        except yandex_music.exceptions.TimedOutError:  # sometimes track takes too long to download.
+            await asyncio.gather(
+                track.download_async(f'music/{gid}.mp3'),
+                self._update_menu(ctx, guild, track, menu_message, button_callback)
+            )
+        except yandex_music.exceptions.TimedOutError:
             logging.warning(f"[VC_EXT] Timed out while downloading track '{track.title}'")
             if not isinstance(ctx, RawReactionActionEvent) and ctx.user and ctx.channel:
                 channel = cast(discord.VoiceChannel, ctx.channel)
                 if not retry:
-                    channel = cast(discord.VoiceChannel, ctx.channel)
                     return await self.play_track(ctx, track, vc=vc, button_callback=button_callback, retry=True)
                 await channel.send(f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
             return None
 
+        song = discord.FFmpegPCMAudio(f'music/{gid}.mp3', options='-vn -filter:a "volume=0.15"')
         vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx, after=True), loop))
         logging.info(f"[VC_EXT] Playing track '{track.title}'")
 
@@ -718,6 +708,30 @@ class VoiceExtension:
                 break
             await asyncio.sleep(0.25)
             update = await self.update_menu_embed(ctx, menu_mid, button_callback)
+    
+    async def _update_menu(
+        self,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
+        guild: ExplicitGuild,
+        track: Track,
+        menu_message: discord.Message | None,
+        button_callback: bool
+    ) -> None:
+        from MusicBot.ui import MenuView
+        gid = cast(int, ctx.guild_id)
+
+        if guild['current_menu'] and not isinstance(ctx, RawReactionActionEvent):
+            if menu_message:
+                try:
+                    if gid in menu_views:
+                        menu_views[gid].stop()
+                    menu_views[gid] = await MenuView(ctx).init()
+                    await menu_message.edit(embed=await generate_item_embed(track, guild['vibing']), view=menu_views[gid])
+                except discord.errors.NotFound:
+                    logging.warning("[VC_EXT] Menu message not found. Using 'update_menu_embed' instead.")
+                    await self._retry_update_menu_embed(ctx, guild['current_menu'], button_callback)
+            else:
+                await self._retry_update_menu_embed(ctx, guild['current_menu'], button_callback)
 
     async def init_ym_client(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, token: str | None = None) -> YMClient | None:
         """Initialize Yandex Music client. Return client on success. Return None if no token found and respond to the context.
@@ -737,7 +751,7 @@ class VoiceExtension:
         if not token:
             logging.debug("No token found in 'init_ym_client'")
             if not isinstance(ctx, discord.RawReactionActionEvent):
-                await ctx.respond("❌ Укажите токен через /account login.", ephemeral=True)
+                await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return None
         
         try:

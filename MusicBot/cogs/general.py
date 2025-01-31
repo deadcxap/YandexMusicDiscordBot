@@ -25,22 +25,23 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
     users_db = BaseUsersDatabase()
     token = users_db.get_ym_token(ctx.interaction.user.id)
     if not token:
-        return ['❌ Укажите токен через /account login.']
+        logging.info(f"[GENERAL] User {ctx.interaction.user.id} has no token")
+        return []
 
     try:
         client = await YMClient(token).init()
     except yandex_music.exceptions.UnauthorizedError:
         logging.info(f"[GENERAL] User {ctx.interaction.user.id} provided invalid token")
-        return ['❌ Недействительный токен.']
+        return []
     
     content_type = ctx.options['тип']
     search = await client.search(ctx.value)
     if not search:
-        logging.warning(f"Failed to search for '{ctx.value}' for user {ctx.interaction.user.id}")
-        return ["❌ Что-то пошло не так. Повторите попытку позже"]
+        logging.warning(f"[GENERAL] Failed to search for '{ctx.value}' for user {ctx.interaction.user.id}")
+        return []
     
     res = []
-    logging.debug(f"Searching for '{ctx.value}' for user {ctx.interaction.user.id}")
+    logging.debug(f"[GENERAL] Searching for '{ctx.value}' for user {ctx.interaction.user.id}")
     
     if content_type == 'Трек' and search.tracks:
         for item in search.tracks.results:
@@ -57,10 +58,9 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
     elif content_type == "Свой плейлист":
         if not client.me or not client.me.account or not client.me.account.uid:
             logging.warning(f"Failed to get playlists for user {ctx.interaction.user.id}")
-            return ["❌ Что-то пошло не так. Повторите попытку позже"]
-        
-        playlists_list = await client.users_playlists_list(client.me.account.uid)
-        res = [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
+        else:
+            playlists_list = await client.users_playlists_list(client.me.account.uid)
+            res = [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
 
     return res
 
@@ -95,7 +95,8 @@ class General(Cog):
             embed.description = (
                 "Этот бот позволяет слушать музыку из вашего аккаунта Yandex Music.\n"
                 "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
-                "Для получения помощи по конкретной команде, введите /help <команда>.\n\n"
+                "Для получения помощи по конкретной команде, введите /help <команда>.\n"
+                "Для изменения настроек необходимо иметь права управления каналами на сервере.\n\n"
                 "**Для дополнительной помощи, присоединяйтесь к [серверу любителей Яндекс Музыки](https://discord.gg/gkmFDaPMeC).**"
             )
 
@@ -152,15 +153,18 @@ class General(Cog):
             embed.description += (
                 "`Примечание`: Если вы один в голосовом канале или имеете разрешение управления каналом, голосование не начинается.\n\n"
                 "Переключиться на следующий трек в очереди. \n```/track next```\n"
-                "Приостановить текущий трек.\n ```/track pause```\n"
-                "Возобновить текущий трек.\n ```/track resume```\n"
-                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```"
+                "Приостановить текущий трек.\n```/track pause```\n"
+                "Возобновить текущий трек.\n```/track resume```\n"
+                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```\n"
+                "Запустить Мою Волну по текущему треку.\n```/track vibe```"
             )
         elif command == 'voice':
             embed.description += (
-                "Присоединить бота в голосовой канал. Требует разрешения управления каналом.\n ```/voice join```\n"
+                "`Примечание`: Доступность меню и Моей Волны зависит от настроек сервера.\n\n"
+                "Присоединить бота в голосовой канал. Требует разрешения управления каналом.\n```/voice join```\n"
                 "Заставить бота покинуть голосовой канал. Требует разрешения управления каналом.\n ```/voice leave```\n"
-                "Создать меню проигрывателя. Доступность зависит от настроек сервера. По умолчанию работает только когда в канале один человек.\n```/voice menu```"
+                "Создать меню проигрывателя. По умолчанию работает только когда в канале один человек.\n```/voice menu```\n"
+                "Запустить Мою Волну. По умолчанию работает только когда в канале один человек.\n```/vibe```"
             )
         else:
             response_message = '❌ Неизвестная команда.'
@@ -194,16 +198,19 @@ class General(Cog):
     @account.command(description="Получить плейлист «Мне нравится»")
     async def likes(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Likes command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
+
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
             logging.info(f"[GENERAL] No token found for user {ctx.user.id}")
-            await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return
+
         client = await YMClient(token).init()
         if not client.me or not client.me.account or not client.me.account.uid:
             logging.warning(f"Failed to fetch user info for user {ctx.user.id}")
             await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
             return
+
         likes = await client.users_likes_tracks()
         if likes is None:
             logging.info(f"[GENERAL] Failed to fetch likes for user {ctx.user.id}")
@@ -226,7 +233,7 @@ class General(Cog):
 
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
-            await ctx.respond('❌ Необходимо указать свой токен доступа с помощью команды /login.', delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return
 
         client = await YMClient(token).init()
@@ -272,7 +279,7 @@ class General(Cog):
         token = self.users_db.get_ym_token(ctx.user.id)
         if not token:
             logging.info(f"[GENERAL] No token found for user {ctx.user.id}")
-            await ctx.respond("❌ Укажите токен через /account login.", ephemeral=True)
+            await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return
 
         try:
@@ -311,7 +318,7 @@ class General(Cog):
             embed = await generate_item_embed(result)
             view = ListenView(result)
         else:
-            result = await client.search(name, True)
+            result = await client.search(name, nocorrect=True)
         
             if not result:
                 logging.warning(f"Failed to search for '{name}' for user {ctx.user.id}")
@@ -368,4 +375,3 @@ class General(Cog):
         
         logging.info(f"[GENERAL] Successfully generated '{content_type}' message for user {ctx.author.id}")
         await ctx.respond(embed=embed, view=view)
-

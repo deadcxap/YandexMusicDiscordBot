@@ -11,7 +11,7 @@ from yandex_music import Track, Album, Artist, Playlist, Label
 from discord import Embed
 
 async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Track], vibing: bool = False) -> Embed:
-    """Generate item embed.
+    """Generate item embed. list[Track] is used for likes.
 
     Args:
         item (yandex_music.Track | yandex_music.Album | yandex_music.Artist | yandex_music.Playlist): Item to be processed.

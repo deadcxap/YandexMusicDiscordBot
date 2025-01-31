@@ -5,4 +5,3 @@ pymongo
 yandex-music
 pillow
 python-dotenv
-wavelink

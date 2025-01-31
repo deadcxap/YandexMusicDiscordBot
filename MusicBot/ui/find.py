@@ -165,7 +165,7 @@ class MyVibeButton(Button, VoiceExtension):
         )
 
 class ListenView(View):
-    def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = False):
+    def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         super().__init__(*items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         logging.debug(f"Creating view for type: '{type(item).__name__}'")
 

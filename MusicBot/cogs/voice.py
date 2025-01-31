@@ -356,15 +356,19 @@ class Voice(Cog, VoiceExtension):
                 token = user['ym_token']
                 if not token:
                     logging.info(f"[VOICE] User {ctx.user.id} has no YM token")
-                    await ctx.respond("❌ Укажите токен через /account login.", ephemeral=True)
+                    await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
                     return
 
                 client = await self.init_ym_client(ctx, user['ym_token'])
                 if not client:
+                    logging.info(f"[VOICE] Failed to init YM client for user {ctx.user.id}")
+                    await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
                     return
 
                 track = guild['current_track']
                 if not track:
+                    logging.info(f"[VOICE] No current track in guild {ctx.guild.id}")
+                    await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
                     return
 
                 res = await client.rotor_station_feedback_track_finished(
@@ -470,7 +474,7 @@ class Voice(Cog, VoiceExtension):
         await self.send_menu_message(ctx)
         await self.update_vibe(ctx, 'track', guild['current_track']['id'])
 
-    @discord.slash_command(name='vibe', description="Запустить Мою Волну.")
+    @voice.command(name='vibe', description="Запустить Мою Волну.")
     async def user_vibe(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Vibe (user) command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
         if not await self.voice_check(ctx):
