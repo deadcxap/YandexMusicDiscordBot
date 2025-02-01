@@ -19,7 +19,7 @@ def setup(bot):
     bot.add_cog(General(bot))
 
 async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
-    if not ctx.interaction.user or not ctx.value:
+    if not ctx.interaction.user or not ctx.value or len(ctx.value) < 2:
         return []
     
     users_db = BaseUsersDatabase()
@@ -93,10 +93,11 @@ class General(Cog):
 
         if command == 'all':
             embed.description = (
-                "Этот бот позволяет слушать музыку из вашего аккаунта Yandex Music.\n"
+                "Этот бот позволяет слушать музыку из вашего аккаунта Яндекс Музыки.\n"
                 "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
                 "Для получения помощи по конкретной команде, введите /help <команда>.\n"
                 "Для изменения настроек необходимо иметь права управления каналами на сервере.\n\n"
+                "Помните, что это **не замена Яндекс Музыки**, а лишь её дополнение. Не ожидайте безупречного звука.\n\n"
                 "**Для дополнительной помощи, присоединяйтесь к [серверу любителей Яндекс Музыки](https://discord.gg/gkmFDaPMeC).**"
             )
 

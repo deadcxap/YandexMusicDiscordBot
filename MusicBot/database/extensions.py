@@ -129,7 +129,7 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         tracks = self.get_tracks_list(gid, 'next')
         if not tracks:
             return None
-        track = tracks.pop()
+        track = tracks.pop(randint(0, len(tracks)))
         self.update(gid, {'next_tracks': tracks})
         return track
     

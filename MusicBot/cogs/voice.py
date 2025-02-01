@@ -1,5 +1,4 @@
 import logging
-from time import time
 from typing import cast
 
 import discord
@@ -241,11 +240,8 @@ class Voice(Cog, VoiceExtension):
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
 
-        vc = await self.get_voice_client(ctx)
-        if await self.voice_check(ctx) and vc:
-            self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': [], 'current_track': None, 'is_stopped': True})
-            vc.stop()
-            await vc.disconnect(force=True)
+        if await self.voice_check(ctx):
+            await self.stop_playing(ctx, full=True)
             await ctx.respond("Отключение успешно!", delete_after=15, ephemeral=True)
             logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild.id}")
 
@@ -338,51 +334,7 @@ class Voice(Cog, VoiceExtension):
             await ctx.respond("❌ Вы не можете остановить воспроизведение, пока в канале находятся другие пользователи.", delete_after=15, ephemeral=True)
 
         elif await self.voice_check(ctx):
-            guild = self.db.get_guild(ctx.guild.id)
-            await self.stop_playing(ctx)
-
-            if guild['current_menu']:
-                menu = await self.get_menu_message(ctx, guild['current_menu'])
-                if menu:
-                    await menu.delete()
-
-            self.db.update(ctx.guild.id, {
-                'current_menu': None, 'repeat': False, 'shuffle': False, 'previous_tracks': [], 'next_tracks': [], 'vibing': False
-            })
-            logging.info(f"[VOICE] Playback stopped in guild {ctx.guild.id}")
-
-            if guild['vibing']:
-                user = self.users_db.get_user(ctx.user.id)
-                token = user['ym_token']
-                if not token:
-                    logging.info(f"[VOICE] User {ctx.user.id} has no YM token")
-                    await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
-                    return
-
-                client = await self.init_ym_client(ctx, user['ym_token'])
-                if not client:
-                    logging.info(f"[VOICE] Failed to init YM client for user {ctx.user.id}")
-                    await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
-                    return
-
-                track = guild['current_track']
-                if not track:
-                    logging.info(f"[VOICE] No current track in guild {ctx.guild.id}")
-                    await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
-                    return
-
-                res = await client.rotor_station_feedback_track_finished(
-                    f"{user['vibe_type']}:{user['vibe_id']}",
-                    track['id'],
-                    track['duration_ms'] // 1000,
-                    cast(str, user['vibe_batch_id']),
-                    time()
-                )
-                logging.info(f"[VOICE] User {ctx.user.id} finished vibing with result: {res}")
-            
-            if ctx.guild.id in menu_views:
-                menu_views[ctx.guild.id].stop()
-                del menu_views[ctx.guild.id]
+            await self.stop_playing(ctx, full=True)
 
             await ctx.respond("Воспроизведение остановлено.", delete_after=15, ephemeral=True)
 
@@ -453,7 +405,7 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] Track added to favorites for user {ctx.author.id} in guild {ctx.guild.id}")
             await ctx.respond(f"Трек **{result}** был добавлен в избранное.", delete_after=15, ephemeral=True)
     
-    @track.command(name='vibe', description="Запустить мою волну по текущему треку.")
+    @track.command(name='vibe', description="Запустить Мою Волну по текущему треку.")
     async def track_vibe(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Vibe (track) command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
         if not await self.voice_check(ctx):

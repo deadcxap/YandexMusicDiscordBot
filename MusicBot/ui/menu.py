@@ -5,7 +5,7 @@ from discord.ui import View, Button, Item, Select
 from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed, ComponentType, SelectOption
 
 import yandex_music.exceptions
-from yandex_music import Track, ClientAsync
+from yandex_music import Track, Playlist, ClientAsync as YMClient
 from MusicBot.cogs.utils.voice_extension import VoiceExtension, menu_views
 
 class ToggleRepeatButton(Button, VoiceExtension):
@@ -119,6 +119,27 @@ class LikeButton(Button, VoiceExtension):
         menu_views[gid] = await MenuView(interaction).init()
         await interaction.edit(view=menu_views[gid])
 
+class DislikeButton(Button, VoiceExtension):
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self, None)
+
+    async def callback(self, interaction: Interaction) -> None:
+        logging.info('[MENU] Dislike button callback...')
+        if not await self.voice_check(interaction):
+            return
+
+        if not (vc := await self.get_voice_client(interaction)) or not vc.is_playing:
+            await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+
+        res = await self.dislike_track(interaction)
+        if res:
+            logging.debug("[VC_EXT] Disliked track")
+            await self.next_track(interaction, vc=vc, button_callback=True)
+        else:
+            logging.debug("[VC_EXT] Failed to dislike track")
+            await interaction.respond("❌ Не удалось поставить дизлайк. Попробуйте позже.")
+
 class LyricsButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
@@ -137,7 +158,7 @@ class LyricsButton(Button, VoiceExtension):
 
         track = cast(Track, Track.de_json(
             current_track,
-            ClientAsync(ym_token),  # type: ignore  # Async client can be used here
+            YMClient(ym_token),  # type: ignore  # Async client can be used here
         ))
 
         try:
@@ -300,10 +321,84 @@ class MyVibeSettingsButton(Button, VoiceExtension):
     
     async def callback(self, interaction: Interaction) -> None:
         logging.info('[VIBE] My vibe settings button callback')
-        if not await self.voice_check(interaction) or not interaction.user:
+        if not await self.voice_check(interaction):
             return
         
         await interaction.respond('Настройки "Моей Волны"', view=MyVibeSettingsView(interaction), ephemeral=True)
+
+class AddToPlaylistSelect(Select, VoiceExtension):
+    def __init__(self, ym_client: YMClient, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        VoiceExtension.__init__(self, None)
+        self.ym_client = ym_client
+        
+    async def callback(self, interaction: Interaction):
+        if not interaction.data or not interaction.guild_id:
+            return
+        if not interaction.data or 'values' not in interaction.data:
+            logging.warning('[MENU] No data in select callback')
+            return
+
+        data = interaction.data['values'][0].split(';')
+        logging.debug(f"[MENU] Add to playlist select callback: {data}")
+
+        playlist = cast(Playlist, await self.ym_client.users_playlists(kind=data[0], user_id=data[1]))
+        current_track = self.db.get_track(interaction.guild_id, 'current')
+        if not current_track:
+            return
+
+        try:
+            res = await self.ym_client.users_playlists_insert_track(
+                kind=f"{playlist.kind}",
+                track_id=current_track['id'],
+                album_id=current_track['albums'][0]['id'],
+                revision=playlist.revision or 1,
+                user_id=f"{playlist.uid}"
+            )
+        except yandex_music.exceptions.NetworkError:
+            res = None
+
+        # value=f"{playlist.kind or "-1"};{current_track['id']};{current_track['albums'][0]['id']};{playlist.revision};{playlist.uid}"
+
+        if res:
+            await interaction.respond('✅ Добавлено в плейлист', delete_after=15, ephemeral=True)
+        else:
+            await interaction.respond('❌ Что-то пошло не так. Попробуйте позже.', delete_after=15, ephemeral=True)
+
+class AddToPlaylistButton(Button, VoiceExtension):
+    def __init__(self, **kwargs):
+        Button.__init__(self, **kwargs)
+        VoiceExtension.__init__(self, None)
+    
+    async def callback(self, interaction: Interaction):
+        if not await self.voice_check(interaction) or not interaction.guild_id:
+            return
+
+        client = await self.init_ym_client(interaction)
+        if not client or not client.me or not client.me.account or not client.me.account.uid:
+            await interaction.respond('❌ Что-то пошло не так. Попробуйте позже.', ephemeral=True)
+            return
+
+        if not (vc := await self.get_voice_client(interaction)) or not vc.is_playing:
+            await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            return
+
+        view = View(
+            AddToPlaylistSelect(
+                client,
+                ComponentType.string_select,
+                placeholder='Выберите плейлист',
+                options=[
+                    SelectOption(
+                        label=playlist.title or "Без названия",
+                        value=f"{playlist.kind or "-1"};{playlist.uid}"
+                    ) for playlist in await client.users_playlists_list(client.me.account.uid)
+                ]
+            )
+        )
+
+        await interaction.respond(view=view, ephemeral=True, delete_after=360)
+
 
 class MenuView(View, VoiceExtension):
     
@@ -322,7 +417,9 @@ class MenuView(View, VoiceExtension):
         self.prev_button = PrevTrackButton(style=ButtonStyle.primary, emoji='⏮', row=0)
         
         self.like_button = LikeButton(style=ButtonStyle.secondary, emoji='❤️', row=1)
+        self.dislike_button = DislikeButton(style=ButtonStyle.secondary, emoji='💔', row=1)
         self.lyrics_button = LyricsButton(style=ButtonStyle.secondary, emoji='📋', row=1)
+        self.add_to_playlist_button = AddToPlaylistButton(style=ButtonStyle.secondary, emoji='📁', row=1)
         self.vibe_button = MyVibeButton(style=ButtonStyle.secondary, emoji='🌊', row=1)
         self.vibe_settings_button = MyVibeSettingsButton(style=ButtonStyle.success, emoji='🛠', row=1)
         
@@ -345,7 +442,9 @@ class MenuView(View, VoiceExtension):
             self.lyrics_button.disabled = True
 
         self.add_item(self.like_button)
+        self.add_item(self.dislike_button)
         self.add_item(self.lyrics_button)
+        self.add_item(self.add_to_playlist_button)
         
         if self.guild['vibing']:
             self.add_item(self.vibe_settings_button)

@@ -1,5 +1,7 @@
 import asyncio
+import aiofiles
 import logging
+import io
 from typing import Any, Literal, cast
 from time import time
 
@@ -228,6 +230,16 @@ class VoiceExtension:
             logging.debug(f"[VIBE] Radio started feedback: {feedback}")
             tracks = await client.rotor_station_tracks(f"{type}:{id}")
             self.db.update(gid, {'vibing': True})
+
+            if update_settings:
+                settings = user['vibe_settings']
+                await client.rotor_station_settings2(
+                    f"{type}:{id}",
+                    mood_energy=settings['mood'],
+                    diversity=settings['diversity'],
+                    language=settings['lang']
+                )
+
         elif guild['current_track']:
             if update_settings:
                 settings = user['vibe_settings']
@@ -404,7 +416,12 @@ class VoiceExtension:
                 await channel.send(f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
             return None
 
-        song = discord.FFmpegPCMAudio(f'music/{gid}.mp3', options='-vn -filter:a "volume=0.15"')
+        async with aiofiles.open(f'music/{gid}.mp3', "rb") as f:
+            track_bytes = io.BytesIO(await f.read())
+            song = discord.FFmpegPCMAudio(track_bytes, pipe=True, options='-vn -filter:a "volume=0.15"')
+        if not guild['current_menu']:
+            await asyncio.sleep(1)
+
         vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx, after=True), loop))
         logging.info(f"[VC_EXT] Playing track '{track.title}'")
 
@@ -422,19 +439,74 @@ class VoiceExtension:
 
         return track.title
 
-    async def stop_playing(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, vc: discord.VoiceClient | None = None) -> None:
+    async def stop_playing(
+        self, ctx: ApplicationContext | Interaction | RawReactionActionEvent,
+        *,
+        vc: discord.VoiceClient | None = None,
+        full: bool = False
+    ) -> None:
 
         gid = ctx.guild_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.guild.id if ctx.guild else None
-        if not gid:
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+
+        if not gid or not uid:
             logging.warning("[VC_EXT] Guild ID not found in context")
             return
 
+        guild = self.db.get_guild(gid)
+
+        if gid in menu_views:
+            menu_views[gid].stop()
+            del menu_views[gid]
         if not vc:
             vc = await self.get_voice_client(ctx)
         if vc:
             logging.debug("[VC_EXT] Stopping playback")
             self.db.update(gid, {'current_track': None, 'is_stopped': True})
             vc.stop()
+
+        if full:
+            if guild['current_menu']:
+                menu = await self.get_menu_message(ctx, guild['current_menu'])
+                if menu:
+                    await menu.delete()
+
+            self.db.update(gid, {
+                'current_menu': None, 'repeat': False, 'shuffle': False, 'previous_tracks': [], 'next_tracks': [], 'vibing': False
+            })
+            logging.info(f"[VOICE] Playback stopped in guild {gid}")
+
+            if guild['vibing']:
+                user = self.users_db.get_user(uid)
+                token = user['ym_token']
+                if not token:
+                    logging.info(f"[VOICE] User {uid} has no YM token")
+                    if not isinstance(ctx, RawReactionActionEvent):
+                        await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
+                    return
+
+                client = await self.init_ym_client(ctx, user['ym_token'])
+                if not client:
+                    logging.info(f"[VOICE] Failed to init YM client for user {uid}")
+                    if not isinstance(ctx, RawReactionActionEvent):
+                        await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
+                    return
+
+                track = guild['current_track']
+                if not track:
+                    logging.info(f"[VOICE] No current track in guild {gid}")
+                    if not isinstance(ctx, RawReactionActionEvent):
+                        await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
+                    return
+
+                res = await client.rotor_station_feedback_track_finished(
+                    f"{user['vibe_type']}:{user['vibe_id']}",
+                    track['id'],
+                    track['duration_ms'] // 1000,
+                    cast(str, user['vibe_batch_id']),
+                    time()
+                )
+                logging.info(f"[VOICE] User {uid} finished vibing with result: {res}")
 
     async def next_track(
         self,
@@ -543,7 +615,7 @@ class VoiceExtension:
                 next_track,
                 client=client  # type: ignore  # Async client can be used here.
             )
-            await self.stop_playing(ctx, vc)
+            await self.stop_playing(ctx, vc=vc)
             title = await self.play_track(
                 ctx,
                 ym_track,  # type: ignore  # de_json should always work here.
@@ -695,6 +767,34 @@ class VoiceExtension:
                 return None
             await client.users_likes_tracks_remove(ym_track.id, client.me.account.uid)
             return 'TRACK REMOVED'
+
+    async def dislike_track(self, ctx: ApplicationContext | Interaction) -> bool:
+        """Dislike current track. Return track title on success.
+
+        Args:
+           ctx (ApplicationContext | Interaction): Context.
+
+        Returns:
+            str | None: Track title or None.
+        """
+        if not ctx.guild or not ctx.user:
+            logging.warning("[VC_EXT] Guild or User not found in context inside 'dislike_track'")
+            return False
+
+        current_track = self.db.get_track(ctx.guild.id, 'current')
+        if not current_track:
+            logging.debug("[VC_EXT] Current track not found in 'dislike_track'")
+            return False
+
+        client = await self.init_ym_client(ctx)
+        if not client:
+            return False
+
+        res = await client.users_dislikes_tracks_add(
+            current_track['id'],
+            client.me.account.uid  # type: ignore
+        )
+        return res
 
     async def _retry_update_menu_embed(
         self,
