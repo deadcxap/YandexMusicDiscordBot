@@ -58,7 +58,11 @@ class PlayPauseButton(Button, VoiceExtension):
         if not vc or not interaction.message:
             return
 
-        embed = interaction.message.embeds[0]
+        try:
+            embed = interaction.message.embeds[0]
+        except IndexError:
+            await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            return
 
         if vc.is_paused():
             vc.resume()
@@ -80,7 +84,7 @@ class NextTrackButton(Button, VoiceExtension):
             return
         title = await self.next_track(interaction, button_callback=True)
         if not title:
-            await interaction.respond(f"Нет треков в очереди.", delete_after=15, ephemeral=True)
+            await interaction.respond(f"❌ Нет треков в очереди.", delete_after=15, ephemeral=True)
 
 class PrevTrackButton(Button, VoiceExtension):    
     def __init__(self, **kwargs):
@@ -102,7 +106,7 @@ class LikeButton(Button, VoiceExtension):
 
     async def callback(self, interaction: Interaction) -> None:
         logging.info('[MENU] Like button callback...')
-        if not await self.voice_check(interaction):
+        if not await self.voice_check(interaction, check_vibe_privilage=False):
             return
 
         if not interaction.guild:
@@ -148,7 +152,7 @@ class LyricsButton(Button, VoiceExtension):
     async def callback(self, interaction: Interaction) -> None:
         logging.info('[MENU] Lyrics button callback...')
 
-        if not await self.voice_check(interaction) or not interaction.guild_id or not interaction.user:
+        if not await self.voice_check(interaction, check_vibe_privilage=False) or not interaction.guild_id or not interaction.user:
             return
         
         ym_token = self.users_db.get_ym_token(interaction.user.id)        
@@ -333,9 +337,9 @@ class AddToPlaylistSelect(Select, VoiceExtension):
         self.ym_client = ym_client
         
     async def callback(self, interaction: Interaction):
-        if not interaction.data or not interaction.guild_id:
+        if not await self.voice_check(interaction, check_vibe_privilage=False):
             return
-        if not interaction.data or 'values' not in interaction.data:
+        if not interaction.guild_id or not interaction.data or 'values' not in interaction.data:
             logging.warning('[MENU] No data in select callback')
             return
 
@@ -358,8 +362,6 @@ class AddToPlaylistSelect(Select, VoiceExtension):
         except yandex_music.exceptions.NetworkError:
             res = None
 
-        # value=f"{playlist.kind or "-1"};{current_track['id']};{current_track['albums'][0]['id']};{playlist.revision};{playlist.uid}"
-
         if res:
             await interaction.respond('✅ Добавлено в плейлист', delete_after=15, ephemeral=True)
         else:
@@ -371,7 +373,7 @@ class AddToPlaylistButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction):
-        if not await self.voice_check(interaction) or not interaction.guild_id:
+        if not await self.voice_check(interaction, check_vibe_privilage=False) or not interaction.guild_id:
             return
 
         client = await self.init_ym_client(interaction)
@@ -433,12 +435,17 @@ class MenuView(View, VoiceExtension):
         self.add_item(self.next_button)
         self.add_item(self.shuffle_button)
         
-        if isinstance(self.ctx, RawReactionActionEvent) or len(cast(VoiceChannel, self.ctx.channel).members) > 2:
-            self.like_button.disabled = True
+        if not isinstance(self.ctx, RawReactionActionEvent) and len(cast(VoiceChannel, self.ctx.channel).members) > 2:
+            self.dislike_button.disabled = True
         elif likes and current_track and str(current_track['id']) in [str(like.id) for like in likes]:
             self.like_button.style = ButtonStyle.success
 
-        if not current_track or not current_track['lyrics_available']:
+        if not current_track:
+            self.lyrics_button.disabled = True
+            self.like_button.disabled = True
+            self.dislike_button.disabled = True
+            self.add_to_playlist_button.disabled = True
+        elif not current_track['lyrics_available']:
             self.lyrics_button.disabled = True
 
         self.add_item(self.like_button)

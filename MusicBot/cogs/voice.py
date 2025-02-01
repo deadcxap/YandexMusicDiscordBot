@@ -52,7 +52,7 @@ class Voice(Cog, VoiceExtension):
             if current_menu:
                 logging.info(f"[VOICE] Disabling current menu for guild {gid} due to multiple members")
 
-                self.db.update(gid, {'current_menu': None, 'repeat': False, 'shuffle': False})
+                self.db.update(gid, {'current_menu': None, 'repeat': False, 'shuffle': False, 'vibing': False})
                 try:
                     message = await channel.fetch_message(current_menu)
                     await message.delete()
@@ -240,8 +240,9 @@ class Voice(Cog, VoiceExtension):
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
 
-        if await self.voice_check(ctx):
+        if (vc := await self.get_voice_client(ctx)) and await self.voice_check(ctx):
             await self.stop_playing(ctx, full=True)
+            await vc.disconnect(force=True)
             await ctx.respond("Отключение успешно!", delete_after=15, ephemeral=True)
             logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild.id}")
 

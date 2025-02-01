@@ -273,7 +273,7 @@ class VoiceExtension:
         await self.stop_playing(ctx)
         return await self.play_track(ctx, next_tracks[0], button_callback=button_callback)
 
-    async def voice_check(self, ctx: ApplicationContext | Interaction) -> bool:
+    async def voice_check(self, ctx: ApplicationContext | Interaction, *, check_vibe_privilage: bool = True) -> bool:
         """Check if bot can perform voice tasks and respond if failed.
 
         Args:
@@ -309,12 +309,13 @@ class VoiceExtension:
             await ctx.respond("❌ Добавьте бота в голосовой канал при помощи команды /voice join.", delete_after=15, ephemeral=True)
             return False
         
-        guild = self.db.get_guild(ctx.guild.id)
-        member = cast(discord.Member, ctx.user)
-        if guild['vibing'] and ctx.user.id != guild['current_viber_id'] and not member.guild_permissions.manage_channels:
-            logging.debug("[VIBE] Context user is not the current viber")
-            await ctx.respond("❌ Вы не можете взаимодействовать с чужой волной!", delete_after=15, ephemeral=True)
-            return False
+        if check_vibe_privilage:
+            guild = self.db.get_guild(ctx.guild.id)
+            member = cast(discord.Member, ctx.user)
+            if guild['vibing'] and ctx.user.id != guild['current_viber_id'] and not member.guild_permissions.manage_channels:
+                logging.debug("[VIBE] Context user is not the current viber")
+                await ctx.respond("❌ Вы не можете взаимодействовать с чужой волной!", delete_after=15, ephemeral=True)
+                return False
 
         logging.debug("[VC_EXT] Voice requirements met")
         return True
