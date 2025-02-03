@@ -11,7 +11,7 @@ from yandex_music import Track, Album, Artist, Playlist, Label
 from discord import Embed
 
 async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Track], vibing: bool = False) -> Embed:
-    """Generate item embed. list[Track] is used for likes.
+    """Generate item embed. list[Track] is used for likes. If vibing is True, add vibing image.
 
     Args:
         item (yandex_music.Track | yandex_music.Album | yandex_music.Artist | yandex_music.Playlist): Item to be processed.
@@ -19,7 +19,7 @@ async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Tra
     Returns:
         discord.Embed: Item embed.
     """
-    logging.debug(f"Generating embed for type: '{type(item).__name__}'")
+    logging.debug(f"[EMBEDS] Generating embed for type: '{type(item).__name__}'")
 
     if isinstance(item, Track):
         embed = await _generate_track_embed(item)

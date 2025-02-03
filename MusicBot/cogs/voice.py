@@ -25,7 +25,7 @@ class Voice(Cog, VoiceExtension):
         logging.info(f"[VOICE] Voice state update for member {member.id} in guild {member.guild.id}")
 
         gid = member.guild.id
-        guild = self.db.get_guild(gid)
+        guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'always_allow_menu': 1})
         discord_guild = await self.typed_bot.fetch_guild(gid)
         current_menu = guild['current_menu']
 
@@ -46,13 +46,13 @@ class Voice(Cog, VoiceExtension):
                     menu_views[member.guild.id].stop()
                     del menu_views[member.guild.id]
 
-            self.db.update(gid, {'previous_tracks': [], 'next_tracks': [], 'vibing': False, 'current_menu': None, 'repeat': False, 'shuffle': False})
+            await self.db.update(gid, {'previous_tracks': [], 'next_tracks': [], 'vibing': False, 'current_menu': None, 'repeat': False, 'shuffle': False})
             vc.stop()
         elif len(channel.members) > 2 and not guild['always_allow_menu']:
             if current_menu:
                 logging.info(f"[VOICE] Disabling current menu for guild {gid} due to multiple members")
 
-                self.db.update(gid, {'current_menu': None, 'repeat': False, 'shuffle': False, 'vibing': False})
+                await self.db.update(gid, {'current_menu': None, 'repeat': False, 'shuffle': False, 'vibing': False})
                 try:
                     message = await channel.fetch_message(current_menu)
                     await message.delete()
@@ -82,7 +82,7 @@ class Voice(Cog, VoiceExtension):
         if not message or message.author.id != bot_id:
             return
 
-        if not self.users_db.get_ym_token(payload.user_id):
+        if not await self.users_db.get_ym_token(payload.user_id):
             await message.remove_reaction(payload.emoji, payload.member)
             await channel.send("Для участия в голосовании необходимо авторизоваться через /account login.", delete_after=15)
             return
@@ -90,7 +90,7 @@ class Voice(Cog, VoiceExtension):
         guild_id = payload.guild_id
         if not guild_id:
             return
-        guild = self.db.get_guild(guild_id)
+        guild = await self.db.get_guild(guild_id, projection={'votes': 1, 'current_track': 1})
         votes = guild['votes']
 
         if payload.message_id not in votes:
@@ -113,7 +113,7 @@ class Voice(Cog, VoiceExtension):
             if vote_data['action'] == 'next':
                 logging.info(f"[VOICE] Skipping track for message {payload.message_id}")
 
-                self.db.update(guild_id, {'is_stopped': False})
+                await self.db.update(guild_id, {'is_stopped': False})
                 title = await self.next_track(payload)
                 await message.clear_reactions()
                 await message.edit(content=f"Сейчас играет: **{title}**!", delete_after=15)
@@ -128,8 +128,8 @@ class Voice(Cog, VoiceExtension):
                     logging.info(f"[VOICE] Recieved empty vote context for message {payload.message_id}")
                     return
 
-                self.db.update(guild_id, {'is_stopped': False})
-                self.db.modify_track(guild_id, track, 'next', 'append')
+                await self.db.update(guild_id, {'is_stopped': False})
+                await self.db.modify_track(guild_id, track, 'next', 'append')
 
                 if guild['current_track']:
                     await message.edit(content=f"Трек был добавлен в очередь!", delete_after=15)
@@ -149,8 +149,8 @@ class Voice(Cog, VoiceExtension):
                     logging.info(f"[VOICE] Recieved empty vote context for message {payload.message_id}")
                     return
 
-                self.db.update(guild_id, {'is_stopped': False})
-                self.db.modify_track(guild_id, tracks, 'next', 'extend')
+                await self.db.update(guild_id, {'is_stopped': False})
+                await self.db.modify_track(guild_id, tracks, 'next', 'extend')
 
                 if guild['current_track']:
                     await message.edit(content=f"Контент был добавлен в очередь!", delete_after=15)
@@ -166,7 +166,7 @@ class Voice(Cog, VoiceExtension):
             await message.edit(content='Запрос был отклонён.', delete_after=15)
             del votes[str(payload.message_id)]
 
-        self.db.update(guild_id, {'votes': votes})
+        await self.db.update(guild_id, {'votes': votes})
 
     @Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
@@ -177,7 +177,7 @@ class Voice(Cog, VoiceExtension):
         guild_id = payload.guild_id
         if not guild_id:
             return
-        guild = self.db.get_guild(guild_id)
+        guild = await self.db.get_guild(guild_id, projection={'votes': 1})
         votes = guild['votes']
 
         channel = cast(discord.VoiceChannel, self.typed_bot.get_channel(payload.channel_id))
@@ -196,13 +196,15 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] User {payload.user_id} removed negative vote for message {payload.message_id}")
             del vote_data['negative_votes'][payload.user_id]
 
-        self.db.update(guild_id, {'votes': votes})
+        await self.db.update(guild_id, {'votes': votes})
     
     @voice.command(name="menu", description="Создать меню проигрывателя. Доступно только если вы единственный в голосовом канале.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Menu command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
+        if not await self.voice_check(ctx):
+            return
 
-        guild = self.db.get_guild(ctx.guild.id)
+        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1})
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
@@ -257,7 +259,7 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] User {ctx.author.id} does not have permissions to execute leave command in guild {ctx.guild.id}")
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
         elif await self.voice_check(ctx):
-            self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': []})
+            await self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': []})
             await ctx.respond("Очередь и история сброшены.", delete_after=15, ephemeral=True)
             logging.info(f"[VOICE] Queue and history cleared in guild {ctx.guild.id}")
 
@@ -267,11 +269,11 @@ class Voice(Cog, VoiceExtension):
 
         if not await self.voice_check(ctx):
             return
-        self.users_db.update(ctx.user.id, {'queue_page': 0})
+        await self.users_db.update(ctx.user.id, {'queue_page': 0})
 
-        tracks = self.db.get_tracks_list(ctx.guild.id, 'next')
+        tracks = await self.db.get_tracks_list(ctx.guild.id, 'next')
         embed = generate_queue_embed(0, tracks)
-        await ctx.respond(embed=embed, view=QueueView(ctx), ephemeral=True)
+        await ctx.respond(embed=embed, view=await QueueView(ctx).init(), ephemeral=True)
 
         logging.info(f"[VOICE] Queue embed sent to user {ctx.author.id} in guild {ctx.guild.id}")
 
@@ -290,7 +292,7 @@ class Voice(Cog, VoiceExtension):
             if not vc.is_paused():
                 vc.pause()
 
-                menu = self.db.get_current_menu(ctx.guild.id)
+                menu = await self.db.get_current_menu(ctx.guild.id)
                 if menu:
                     await self.update_menu_embed(ctx, menu)
 
@@ -314,7 +316,7 @@ class Voice(Cog, VoiceExtension):
         elif await self.voice_check(ctx) and (vc := await self.get_voice_client(ctx)):
             if vc.is_paused():
                 vc.resume()
-                menu = self.db.get_current_menu(ctx.guild.id)
+                menu = await self.db.get_current_menu(ctx.guild.id)
                 if menu:
                     await self.update_menu_embed(ctx, menu)
                 logging.info(f"[VOICE] Track resumed in guild {ctx.guild.id}")
@@ -346,7 +348,7 @@ class Voice(Cog, VoiceExtension):
             return
 
         gid = ctx.guild.id
-        guild = self.db.get_guild(gid)
+        guild = await self.db.get_guild(gid, projection={'next_tracks': 1, 'vote_next_track': 1})
         if not guild['next_tracks']:
             logging.info(f"[VOICE] No tracks in queue in guild {ctx.guild.id}")
             await ctx.respond("❌ Нет песенен в очереди.", delete_after=15, ephemeral=True)
@@ -364,7 +366,7 @@ class Voice(Cog, VoiceExtension):
             await response.add_reaction('✅')
             await response.add_reaction('❌')
 
-            self.db.update_vote(
+            await self.db.update_vote(
                 gid,
                 response.id,
                 {
@@ -378,7 +380,7 @@ class Voice(Cog, VoiceExtension):
         else:
             logging.info(f"[VOICE] Skipping vote for user {ctx.author.id} in guild {ctx.guild.id}")
 
-            self.db.update(gid, {'is_stopped': False})
+            await self.db.update(gid, {'is_stopped': False})
             title = await self.next_track(ctx)
             await ctx.respond(f"Сейчас играет: **{title}**!", delete_after=15)
 
@@ -412,7 +414,7 @@ class Voice(Cog, VoiceExtension):
         if not await self.voice_check(ctx):
             return
 
-        guild = self.db.get_guild(ctx.guild.id)
+        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1, 'current_track': 1})
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
@@ -425,7 +427,9 @@ class Voice(Cog, VoiceExtension):
             return
 
         await self.send_menu_message(ctx)
-        await self.update_vibe(ctx, 'track', guild['current_track']['id'])
+        feedback = await self.update_vibe(ctx, 'track', guild['current_track']['id'])
+        if not feedback:
+            await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", ephemeral=True)
 
     @voice.command(name='vibe', description="Запустить Мою Волну.")
     async def user_vibe(self, ctx: discord.ApplicationContext) -> None:
@@ -433,7 +437,7 @@ class Voice(Cog, VoiceExtension):
         if not await self.voice_check(ctx):
             return
 
-        guild = self.db.get_guild(ctx.guild.id)
+        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1})
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
@@ -442,4 +446,6 @@ class Voice(Cog, VoiceExtension):
             return
 
         await self.send_menu_message(ctx)
-        await self.update_vibe(ctx, 'user', 'onyourwave')
+        feedback = await self.update_vibe(ctx, 'user', 'onyourwave')
+        if not feedback:
+            await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", ephemeral=True)

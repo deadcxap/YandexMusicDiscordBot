@@ -19,7 +19,9 @@ class Settings(Cog):
 
     @settings.command(name="show", description="Показать текущие настройки бота.")
     async def show(self, ctx: discord.ApplicationContext) -> None:
-        guild = self.db.get_guild(ctx.guild.id)
+        guild = await self.db.get_guild(ctx.guild.id, projection={
+            'allow_explicit': 1, 'always_allow_menu': 1, 'vote_next_track': 1, 'vote_add_track': 1, 'vote_add_album': 1, 'vote_add_artist': 1, 'vote_add_playlist': 1
+        })
         embed = discord.Embed(title="Настройки бота", color=0xfed42b)
         
         explicit = "✅ - Разрешены" if guild['allow_explicit'] else "❌ - Запрещены"
@@ -44,8 +46,8 @@ class Settings(Cog):
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
 
-        guild = self.db.get_guild(ctx.guild.id)
-        self.db.update(ctx.guild.id, {'allow_explicit': not guild['allow_explicit']})
+        guild = await self.db.get_guild(ctx.guild.id, projection={'allow_explicit': 1})
+        await self.db.update(ctx.guild.id, {'allow_explicit': not guild['allow_explicit']})
         await ctx.respond(f"Треки с содержанием не для детей теперь {'разрешены' if not guild['allow_explicit'] else 'запрещены'}.", delete_after=15, ephemeral=True)
 
     @settings.command(name="menu", description="Разрешить или запретить создание меню проигрывателя, даже если в канале больше одного человека.")
@@ -55,8 +57,8 @@ class Settings(Cog):
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
 
-        guild = self.db.get_guild(ctx.guild.id)
-        self.db.update(ctx.guild.id, {'always_allow_menu': not guild['always_allow_menu']})
+        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1})
+        await self.db.update(ctx.guild.id, {'always_allow_menu': not guild['always_allow_menu']})
         await ctx.respond(f"Меню проигрывателя теперь {'можно' if not guild['always_allow_menu'] else 'нельзя'} создавать в каналах с несколькими людьми.", delete_after=15, ephemeral=True)
 
     @settings.command(name="vote", description="Настроить голосование.")
@@ -73,10 +75,10 @@ class Settings(Cog):
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
 
-        guild = self.db.get_guild(ctx.guild.id)
+        guild = await self.db.get_guild(ctx.guild.id, projection={'vote_next_track': 1, 'vote_add_track': 1, 'vote_add_album': 1, 'vote_add_artist': 1, 'vote_add_playlist': 1})
         
         if vote_type == '-Всё':
-            self.db.update(ctx.guild.id, {
+            await self.db.update(ctx.guild.id, {
                 'vote_next_track': False,
                 'vote_add_track': False,
                 'vote_add_album': False,
@@ -86,7 +88,7 @@ class Settings(Cog):
             )
             response_message = "Голосование выключено."
         elif vote_type == '+Всё':
-            self.db.update(ctx.guild.id, {
+            await self.db.update(ctx.guild.id, {
                 'vote_next_track': True,
                 'vote_add_track': True,
                 'vote_add_album': True,
@@ -96,19 +98,19 @@ class Settings(Cog):
             )
             response_message = "Голосование включено."
         elif vote_type == 'Переключение':
-            self.db.update(ctx.guild.id, {'vote_next_track': not guild['vote_next_track']})
+            await self.db.update(ctx.guild.id, {'vote_next_track': not guild['vote_next_track']})
             response_message = "Голосование за переключение трека " + ("выключено." if guild['vote_next_track'] else "включено.")
         elif vote_type == 'Трек':
-            self.db.update(ctx.guild.id, {'vote_add_track': not guild['vote_add_track']})
+            await self.db.update(ctx.guild.id, {'vote_add_track': not guild['vote_add_track']})
             response_message = "Голосование за добавление трека " + ("выключено." if guild['vote_add_track'] else "включено.")
         elif vote_type == 'Альбом':
-            self.db.update(ctx.guild.id, {'vote_add_album': not guild['vote_add_album']})
+            await self.db.update(ctx.guild.id, {'vote_add_album': not guild['vote_add_album']})
             response_message = "Голосование за добавление альбома " + ("выключено." if guild['vote_add_album'] else "включено.")
         elif vote_type == 'Артист':
-            self.db.update(ctx.guild.id, {'vote_add_artist': not guild['vote_add_artist']})
+            await self.db.update(ctx.guild.id, {'vote_add_artist': not guild['vote_add_artist']})
             response_message = "Голосование за добавление артиста " + ("выключено." if guild['vote_add_artist'] else "включено.")
         elif vote_type == 'Плейлист':
-            self.db.update(ctx.guild.id, {'vote_add_playlist': not guild['vote_add_playlist']})
+            await self.db.update(ctx.guild.id, {'vote_add_playlist': not guild['vote_add_playlist']})
             response_message = "Голосование за добавление плейлиста " + ("выключено." if guild['vote_add_playlist'] else "включено.")
         
         await ctx.respond(response_message, delete_after=15, ephemeral=True)

@@ -1,5 +1,5 @@
 from math import ceil
-from typing import Any
+from typing import Self, Any
 
 from discord.ui import View, Button, Item
 from discord import ApplicationContext, ButtonStyle, Interaction, Embed
@@ -45,11 +45,11 @@ class MPNextButton(Button, VoiceExtension):
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user:
             return
-        user = self.users_db.get_user(interaction.user.id)
+        user = await self.users_db.get_user(interaction.user.id)
         page = user['playlists_page'] + 1
-        self.users_db.update(interaction.user.id, {'playlists_page': page})
+        await self.users_db.update(interaction.user.id, {'playlists_page': page})
         embed = generate_playlists_embed(page, user['playlists'])
-        await interaction.edit(embed=embed, view=MyPlaylists(interaction))
+        await interaction.edit(embed=embed, view=await MyPlaylists(interaction).init())
 
 class MPPrevButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -59,31 +59,37 @@ class MPPrevButton(Button, VoiceExtension):
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user:
             return
-        user = self.users_db.get_user(interaction.user.id)
+        user = await self.users_db.get_user(interaction.user.id)
         page = user['playlists_page'] - 1
-        self.users_db.update(interaction.user.id, {'playlists_page': page})
+        await self.users_db.update(interaction.user.id, {'playlists_page': page})
         embed = generate_playlists_embed(page, user['playlists'])
-        await interaction.edit(embed=embed, view=MyPlaylists(interaction))
+        await interaction.edit(embed=embed, view=await MyPlaylists(interaction).init())
 
 class MyPlaylists(View, VoiceExtension):
     def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
-        if not ctx.user:
-            return
-        user = self.users_db.get_user(ctx.user.id)
+
+        self.ctx = ctx
+        self.next_button = MPNextButton(style=ButtonStyle.primary, emoji='▶️')
+        self.prev_button = MPPrevButton(style=ButtonStyle.primary, emoji='◀️')
+    
+    async def init(self) -> Self:
+        if not self.ctx.user:
+            return self
+
+        user = await self.users_db.get_user(self.ctx.user.id)
         count = 10 * user['playlists_page']
-
-        next_button = MPNextButton(style=ButtonStyle.primary, emoji='▶️')
-        prev_button = MPPrevButton(style=ButtonStyle.primary, emoji='◀️')
-
+        
         if not user['playlists'][count + 10:]:
-            next_button.disabled = True
+            self.next_button.disabled = True
         if not user['playlists'][:count]:
-            prev_button.disabled = True
+            self.prev_button.disabled = True
+        
+        self.add_item(self.prev_button)
+        self.add_item(self.next_button)
 
-        self.add_item(prev_button)
-        self.add_item(next_button)
+        return self
 
 class QueueNextButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -93,12 +99,12 @@ class QueueNextButton(Button, VoiceExtension):
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user or not interaction.guild:
             return
-        user = self.users_db.get_user(interaction.user.id)
+        user = await self.users_db.get_user(interaction.user.id)
         page = user['queue_page'] + 1
-        self.users_db.update(interaction.user.id, {'queue_page': page})
-        tracks = self.db.get_tracks_list(interaction.guild.id, 'next')
+        await self.users_db.update(interaction.user.id, {'queue_page': page})
+        tracks = await self.db.get_tracks_list(interaction.guild.id, 'next')
         embed = generate_queue_embed(page, tracks)
-        await interaction.edit(embed=embed, view=QueueView(interaction))
+        await interaction.edit(embed=embed, view=await QueueView(interaction).init())
 
 class QueuePrevButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -108,31 +114,38 @@ class QueuePrevButton(Button, VoiceExtension):
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user or not interaction.guild:
             return
-        user = self.users_db.get_user(interaction.user.id)
+        user = await self.users_db.get_user(interaction.user.id)
         page = user['queue_page'] - 1
-        self.users_db.update(interaction.user.id, {'queue_page': page})
-        tracks = self.db.get_tracks_list(interaction.guild.id, 'next')
+        await self.users_db.update(interaction.user.id, {'queue_page': page})
+        tracks = await self.db.get_tracks_list(interaction.guild.id, 'next')
         embed = generate_queue_embed(page, tracks)
-        await interaction.edit(embed=embed, view=QueueView(interaction))
+        await interaction.edit(embed=embed, view=await QueueView(interaction).init())
 
 class QueueView(View, VoiceExtension):
     def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
-        if not ctx.user or not ctx.guild:
-            return
 
-        tracks = self.db.get_tracks_list(ctx.guild.id, 'next')
-        user = self.users_db.get_user(ctx.user.id)
+        self.ctx = ctx
+        self.next_button = QueueNextButton(style=ButtonStyle.primary, emoji='▶️')
+        self.prev_button = QueuePrevButton(style=ButtonStyle.primary, emoji='◀️')
+    
+    async def init(self) -> Self:
+        if not self.ctx.user or not self.ctx.guild:
+            return self
+
+        tracks = await self.db.get_tracks_list(self.ctx.guild.id, 'next')
+        user = await self.users_db.get_user(self.ctx.user.id)
+        
         count = 15 * user['queue_page']
-
-        next_button = QueueNextButton(style=ButtonStyle.primary, emoji='▶️')
-        prev_button = QueuePrevButton(style=ButtonStyle.primary, emoji='◀️')
-
+        
         if not tracks[count + 15:]:
-            next_button.disabled = True
+            self.next_button.disabled = True
         if not tracks[:count]:
-            prev_button.disabled = True
-
-        self.add_item(prev_button)
-        self.add_item(next_button)
+            self.prev_button.disabled = True
+        
+        self.add_item(self.prev_button)
+        self.add_item(self.next_button)
+    
+        return self
+        

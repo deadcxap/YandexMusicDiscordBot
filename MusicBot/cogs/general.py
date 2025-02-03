@@ -23,7 +23,7 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
         return []
     
     users_db = BaseUsersDatabase()
-    token = users_db.get_ym_token(ctx.interaction.user.id)
+    token = await users_db.get_ym_token(ctx.interaction.user.id)
     if not token:
         logging.info(f"[GENERAL] User {ctx.interaction.user.id} has no token")
         return []
@@ -186,21 +186,21 @@ class General(Cog):
         about = cast(yandex_music.Status, client.me).to_dict()
         uid = ctx.author.id
 
-        self.users_db.update(uid, {'ym_token': token})
+        await self.users_db.update(uid, {'ym_token': token})
         logging.info(f"[GENERAL] Token saved for user {ctx.author.id}")
         await ctx.respond(f'Привет, {about['account']['first_name']}!', delete_after=15, ephemeral=True)
     
     @account.command(description="Удалить токен из датабазы бота.")
     async def remove(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Remove command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
-        self.users_db.update(ctx.user.id, {'ym_token': None})
+        await self.users_db.update(ctx.user.id, {'ym_token': None})
         await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 
     @account.command(description="Получить плейлист «Мне нравится»")
     async def likes(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Likes command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
 
-        token = self.users_db.get_ym_token(ctx.user.id)
+        token = await self.users_db.get_ym_token(ctx.user.id)
         if not token:
             logging.info(f"[GENERAL] No token found for user {ctx.user.id}")
             await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
@@ -232,7 +232,7 @@ class General(Cog):
     async def playlists(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Playlists command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
 
-        token = self.users_db.get_ym_token(ctx.user.id)
+        token = await self.users_db.get_ym_token(ctx.user.id)
         if not token:
             await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return
@@ -247,11 +247,11 @@ class General(Cog):
             (playlist.title if playlist.title else 'Без названия', playlist.track_count if playlist.track_count else 0) for playlist in playlists_list
         ]
 
-        self.users_db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
+        await self.users_db.update(ctx.user.id, {'playlists': playlists, 'playlists_page': 0})
         embed = generate_playlists_embed(0, playlists)
 
         logging.info(f"[GENERAL] Successfully fetched playlists for user {ctx.user.id}")
-        await ctx.respond(embed=embed, view=MyPlaylists(ctx), ephemeral=True)
+        await ctx.respond(embed=embed, view=await MyPlaylists(ctx).init(), ephemeral=True)
 
     @discord.slash_command(description="Найти контент и отправить информацию о нём. Возвращается лучшее совпадение.")
     @discord.option(
@@ -276,8 +276,8 @@ class General(Cog):
     ) -> None:
         logging.info(f"[GENERAL] Find command invoked by user {ctx.user.id} in guild {ctx.guild_id} for '{content_type}' with name '{name}'")
 
-        guild = self.db.get_guild(ctx.guild_id)
-        token = self.users_db.get_ym_token(ctx.user.id)
+        guild = await self.db.get_guild(ctx.guild_id, projection={'allow_explicit': 1})
+        token = await self.users_db.get_ym_token(ctx.user.id)
         if not token:
             logging.info(f"[GENERAL] No token found for user {ctx.user.id}")
             await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)

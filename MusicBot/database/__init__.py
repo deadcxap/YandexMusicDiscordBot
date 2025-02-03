@@ -1,4 +1,4 @@
-from .base import BaseGuildsDatabase, BaseUsersDatabase
+from .base import BaseGuildsDatabase, BaseUsersDatabase, guilds, users
 from .extensions import VoiceGuildsDatabase
 
 from .user import User, ExplicitUser
@@ -12,5 +12,7 @@ __all__ = [
     'ExplicitUser',
     'Guild',
     'ExplicitGuild',
-    'MessageVotes'
+    'MessageVotes',
+    'guilds',
+    'users',
 ]

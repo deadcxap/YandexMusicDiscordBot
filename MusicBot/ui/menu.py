@@ -18,8 +18,8 @@ class ToggleRepeatButton(Button, VoiceExtension):
         if not await self.voice_check(interaction) or not interaction.guild:
             return
         gid = interaction.guild.id
-        guild = self.db.get_guild(gid)
-        self.db.update(gid, {'repeat': not guild['repeat']})
+        guild = await self.db.get_guild(gid)
+        await self.db.update(gid, {'repeat': not guild['repeat']})
 
         if gid in menu_views:
             menu_views[gid].stop()
@@ -36,8 +36,8 @@ class ToggleShuffleButton(Button, VoiceExtension):
         if not await self.voice_check(interaction) or not interaction.guild:
             return
         gid = interaction.guild.id
-        guild = self.db.get_guild(gid)
-        self.db.update(gid, {'shuffle': not guild['shuffle']})
+        guild = await self.db.get_guild(gid)
+        await self.db.update(gid, {'shuffle': not guild['shuffle']})
 
         if gid in menu_views:
             menu_views[gid].stop()
@@ -155,8 +155,8 @@ class LyricsButton(Button, VoiceExtension):
         if not await self.voice_check(interaction, check_vibe_privilage=False) or not interaction.guild_id or not interaction.user:
             return
         
-        ym_token = self.users_db.get_ym_token(interaction.user.id)        
-        current_track = self.db.get_track(interaction.guild_id, 'current')
+        ym_token = await self.users_db.get_ym_token(interaction.user.id)        
+        current_track = await self.db.get_track(interaction.guild_id, 'current')
         if not current_track or not ym_token:
             return
 
@@ -199,7 +199,7 @@ class MyVibeButton(Button, VoiceExtension):
             logging.warning('[VIBE] No guild id in button callback')
             return
 
-        track = self.db.get_track(interaction.guild_id, 'current')
+        track = await self.db.get_track(interaction.guild_id, 'current')
         if track:
             logging.info(f"[MENU] Playing vibe for track '{track["id"]}'")
             await self.update_vibe(
@@ -248,7 +248,7 @@ class MyVibeSelect(Select, VoiceExtension):
             return
 
         logging.info(f"[VIBE] Settings option '{custom_id}' updated to {data_value}")
-        self.users_db.update(interaction.user.id, {f'vibe_settings.{custom_id}': data_value})
+        await self.users_db.update(interaction.user.id, {f'vibe_settings.{custom_id}': data_value})
         
         view = MyVibeSettingsView(interaction)
         view.disable_all_items()
@@ -263,11 +263,14 @@ class MyVibeSettingsView(View, VoiceExtension):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
 
-        if not interaction.user:
+        self.interaction = interaction
+    
+    async def init(self) -> None:
+        if not self.interaction.user:
             logging.warning('[VIBE] No user in settings view')
             return
 
-        settings = self.users_db.get_user(interaction.user.id)['vibe_settings']
+        settings = (await self.users_db.get_user(self.interaction.user.id, projection={'vibe_settings'}))['vibe_settings']
         
         diversity_settings = settings['diversity']
         diversity = [
@@ -347,7 +350,7 @@ class AddToPlaylistSelect(Select, VoiceExtension):
         logging.debug(f"[MENU] Add to playlist select callback: {data}")
 
         playlist = cast(Playlist, await self.ym_client.users_playlists(kind=data[0], user_id=data[1]))
-        current_track = self.db.get_track(interaction.guild_id, 'current')
+        current_track = await self.db.get_track(interaction.guild_id, 'current')
         if not current_track:
             return
 
@@ -407,13 +410,10 @@ class MenuView(View, VoiceExtension):
     def __init__(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, *items: Item, timeout: float | None = 3600, disable_on_timeout: bool = False):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
-        if not ctx.guild_id:
-            return
         self.ctx = ctx
-        self.guild = self.db.get_guild(ctx.guild_id)
 
-        self.repeat_button = ToggleRepeatButton(style=ButtonStyle.success if self.guild['repeat'] else ButtonStyle.secondary, emoji='🔂', row=0)
-        self.shuffle_button = ToggleShuffleButton(style=ButtonStyle.success if self.guild['shuffle'] else ButtonStyle.secondary, emoji='🔀', row=0)
+        self.repeat_button = ToggleRepeatButton(style=ButtonStyle.secondary, emoji='🔂', row=0)
+        self.shuffle_button = ToggleShuffleButton(style=ButtonStyle.secondary, emoji='🔀', row=0)
         self.play_pause_button = PlayPauseButton(style=ButtonStyle.primary, emoji='⏯', row=0)
         self.next_button = NextTrackButton(style=ButtonStyle.primary, emoji='⏭', row=0)
         self.prev_button = PrevTrackButton(style=ButtonStyle.primary, emoji='⏮', row=0)
@@ -426,6 +426,16 @@ class MenuView(View, VoiceExtension):
         self.vibe_settings_button = MyVibeSettingsButton(style=ButtonStyle.success, emoji='🛠', row=1)
         
     async def init(self, *, disable: bool = False) -> Self:
+        if not self.ctx.guild_id:
+            return self
+
+        self.guild = await self.db.get_guild(self.ctx.guild_id)
+    
+        if self.guild['repeat']:
+            self.repeat_button.style = ButtonStyle.success
+        if self.guild['shuffle']:
+            self.shuffle_button.style = ButtonStyle.success
+        
         current_track = self.guild['current_track']
         likes = await self.get_likes(self.ctx)
 
@@ -470,7 +480,7 @@ class MenuView(View, VoiceExtension):
         
         if self.guild['current_menu']:
             await self.stop_playing(self.ctx)
-            self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
+            await self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
             message = await self.get_menu_message(self.ctx, self.guild['current_menu'])
             if message:
                 await message.delete()
