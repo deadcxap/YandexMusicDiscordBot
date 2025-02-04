@@ -13,8 +13,7 @@ users: AsyncCollection[ExplicitUser] = db.users
 guilds: AsyncCollection[ExplicitGuild] = db.guilds
 
 class BaseUsersDatabase:
-    DEFAULT_USER = ExplicitUser(
-        _id=0,
+    DEFAULT_USER = User(
         ym_token=None,
         playlists=[],
         playlists_page=0,
@@ -61,8 +60,7 @@ class BaseUsersDatabase:
 
 
 class BaseGuildsDatabase:
-    DEFAULT_GUILD = ExplicitGuild(
-        _id=0,
+    DEFAULT_GUILD = Guild(
         next_tracks=[],
         previous_tracks=[],
         current_track=None,

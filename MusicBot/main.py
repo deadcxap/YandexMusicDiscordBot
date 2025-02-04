@@ -28,10 +28,16 @@ if __name__ == '__main__':
     except ImportError:
         pass
     
-    logging.getLogger().setLevel(logging.DEBUG)
-    logging.getLogger('discord').setLevel(logging.INFO)
-    logging.getLogger('pymongo').setLevel(logging.INFO)
-    logging.getLogger('yandex_music').setLevel(logging.WARNING)
+    if os.getenv('DEBUG') == 'True':
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger('discord').setLevel(logging.INFO)
+        logging.getLogger('pymongo').setLevel(logging.INFO)
+        logging.getLogger('yandex_music').setLevel(logging.WARNING)
+    else:
+        logging.getLogger().setLevel(logging.INFO)
+        logging.getLogger('discord').setLevel(logging.WARNING)
+        logging.getLogger('pymongo').setLevel(logging.WARNING)
+        logging.getLogger('yandex_music').setLevel(logging.WARNING)
     
     if not os.path.exists('music'):
         os.mkdir('music')
