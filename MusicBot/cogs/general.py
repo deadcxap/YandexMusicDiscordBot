@@ -62,7 +62,7 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
             playlists_list = await client.users_playlists_list(client.me.account.uid)
             res = [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
 
-    return res
+    return res[:100]
 
 class General(Cog):
     

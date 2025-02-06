@@ -55,7 +55,7 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         operations = {
             'insert': {'$push': {field: {'$each': track_data, '$position': 0}}},
             'append': {'$push': {field: {'$each': track_data}}},
-            'extend': {'$push': {field: {'$each': track_data}}},
+            'extend': {'$push': {field: {'$each': track_data}}},  # Same as append for consistency with python
             'pop_start': {'$pop': {field: -1}},
             'pop_end': {'$pop': {field: 1}}
         }
@@ -139,9 +139,7 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
 
         await guilds.update_one(
             {'_id': gid},
-            {
-                '$set': {'current_track': track}
-            }
+            {'$set': {'current_track': track}}
         )
 
     async def clear_tracks(self, gid: int, list_type: Literal['next', 'previous']) -> None:

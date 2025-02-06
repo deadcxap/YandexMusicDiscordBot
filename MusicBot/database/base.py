@@ -1,5 +1,5 @@
 from typing import Iterable, Any, cast
-from pymongo import AsyncMongoClient, ReturnDocument
+from pymongo import AsyncMongoClient, ReturnDocument, UpdateOne
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.results import UpdateResult
 
@@ -43,6 +43,19 @@ class BaseUsersDatabase:
             upsert=True,
             projection=projection
         )
+        ops = []
+
+        for key, value in self.DEFAULT_USER.items():
+            if key not in user and (projection is None or key in projection):
+                user[key] = value
+                ops.append(UpdateOne({'_id': uid}, {'$set': {key: value}}))
+        for key, value in user.copy().items():
+            if key not in self.DEFAULT_USER and key != '_id':
+                del user[key]
+                ops.append(UpdateOne({'_id': uid}, {'$unset': {key: ''}}))
+
+        if ops:
+            await users.bulk_write(ops)
         return cast(ExplicitUser, user)
 
     async def get_ym_token(self, uid: int) -> str | None:
@@ -68,6 +81,7 @@ class BaseGuildsDatabase:
         is_stopped=True,
         allow_explicit=True,
         always_allow_menu=False,
+        allow_connect=False,
         vote_next_track=True,
         vote_add_track=True,
         vote_add_album=True,
@@ -95,6 +109,19 @@ class BaseGuildsDatabase:
             upsert=True,
             projection=projection
         )
+        ops = []
+
+        for key, value in self.DEFAULT_GUILD.items():
+            if key not in guild and (projection is None or key in projection):
+                guild[key] = value
+                ops.append(UpdateOne({'_id': gid}, {'$set': {key: value}}))
+        for key, value in guild.copy().items():
+            if key not in self.DEFAULT_GUILD and key != '_id':
+                del guild[key]
+                ops.append(UpdateOne({'_id': gid}, {'$unset': {key: ''}}))
+    
+        if ops:
+            await guilds.bulk_write(ops)
         return cast(ExplicitGuild, guild)
 
     async def update_vote(self, gid: int, mid: int, data: MessageVotes) -> UpdateResult:

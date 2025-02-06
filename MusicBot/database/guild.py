@@ -15,6 +15,7 @@ class Guild(TypedDict, total=False):
     is_stopped: bool
     allow_explicit: bool
     always_allow_menu: bool
+    allow_connect: bool
     vote_next_track: bool
     vote_add_track: bool
     vote_add_album: bool
@@ -35,6 +36,7 @@ class ExplicitGuild(TypedDict):
     is_stopped: bool  # Prevents the `after` callback of play_track
     allow_explicit: bool
     always_allow_menu: bool
+    allow_connect: bool
     vote_next_track: bool
     vote_add_track: bool
     vote_add_album: bool
