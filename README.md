@@ -1,16 +1,23 @@
-# YandexMusicDiscordBot
-
 <p align="center">
   <img src="assets/banner.png">
 </p>
+
+<h1 align="center">YandexMusicDiscordBot</h1>
 
 <p align="center">
   <i>Ваш личный музыкальный бот, использующий API Яндекса, потому что а почему бы и нет!</i>
 </p>
 
-<p align="center">
-  <strong>YandexMusicDiscordBot или его разработчик не связаны с Яндексом или какой-либо из их компаний, сотрудников и т.д. Товарный знак и логотипы являются собственностью их владельцев.</strong>
-</p>
+<div align="center">
+  <p align="center">
+    <strong>YandexMusicDiscordBot или его разработчик не связаны с Яндексом или какой-либо из их компаний, сотрудников и т.д. Товарный знак и логотипы являются собственностью их владельцев.</strong>
+  </p>
+  <a target="_blank" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">
+    <img src="https://img.shields.io/badge/License-CC--BY--NC--SA-3376f2" alt="License" align="center"/>
+  </a>
+
+  </p>
+</div>
 
 ## Предисловие
 
