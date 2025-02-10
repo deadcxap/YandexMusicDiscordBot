@@ -454,7 +454,7 @@ class Voice(Cog, VoiceExtension):
             return
         
         if not guild['current_menu']:
-            await self.send_menu_message(ctx)
+            await self.send_menu_message(ctx, disable=True)
 
         next_track = await self.db.get_track(ctx.guild_id, 'next')
         if next_track:
@@ -480,7 +480,7 @@ class Voice(Cog, VoiceExtension):
             return
         
         if not guild['current_menu']:
-            await self.send_menu_message(ctx)
+            await self.send_menu_message(ctx, disable=True)
 
         next_track = await self.db.get_track(ctx.guild_id, 'next')
         if next_track:
