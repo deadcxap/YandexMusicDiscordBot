@@ -155,14 +155,30 @@ class MyVibeButton(Button, VoiceExtension):
 
         track_type_map: dict[Any, Literal['track', 'album', 'artist', 'playlist', 'user']] = {
             Track: 'track', Album: 'album', Artist: 'artist', Playlist: 'playlist', list: 'user'
-        }  # NOTE: Likes playlist should have its own entry instead of 'user:onyourwave'
+        }
+
+        if isinstance(self.item, Playlist):
+            if not self.item.owner:
+                logging.warning(f"[VIBE] Playlist owner is None")
+                await interaction.respond("❌ Не удалось получить информацию о плейлисте.", ephemeral=True)
+                return
+
+            _id = self.item.owner.login + '_' + str(self.item.kind)
+        elif not isinstance(self.item, list):
+            _id = cast(int | str, self.item.id)
+        else:
+            _id = 'onyourwave'
 
         await self.send_menu_message(interaction)
         await self.update_vibe(
             interaction,
             track_type_map[type(self.item)],
-            cast(int, self.item.uid) if isinstance(self.item, Playlist) else cast(int | str, self.item.id) if not isinstance(self.item, list) else 'onyourwave'
+            _id
         )
+
+        next_track = await self.db.get_track(gid, 'next')
+        if next_track:
+            await self._play_next_track(interaction, next_track)
 
 class ListenView(View):
     def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):

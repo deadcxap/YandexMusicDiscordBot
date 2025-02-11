@@ -99,10 +99,13 @@ async def _generate_track_embed(track: Track) -> Embed:
 
     artist_url = f"https://music.yandex.ru/artist/{artist.id}"
     artist_cover = artist.cover
-    if not artist_cover:
+
+    if not artist_cover and artist.op_image:
         artist_cover_url = artist.get_op_image_url()
-    else:
+    elif artist_cover:
         artist_cover_url = artist_cover.get_url()
+    else:
+        artist_cover_url = None
 
     embed = Embed(
         title=title,
@@ -172,10 +175,13 @@ async def _generate_album_embed(album: Album) -> Embed:
 
     artist_url = f"https://music.yandex.ru/artist/{artist.id}"
     artist_cover = artist.cover
-    if not artist_cover:
+
+    if not artist_cover and artist.op_image:
         artist_cover_url = artist.get_op_image_url()
-    else:
+    elif artist_cover:
         artist_cover_url = artist_cover.get_url()
+    else:
+        artist_cover_url = None
 
     embed = Embed(
         title=title,
@@ -264,7 +270,7 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
     title = cast(str, playlist.title)
     track_count = playlist.track_count
     avail = cast(bool, playlist.available)
-    description = playlist.description_formatted
+    description = playlist.description
     year = playlist.created
     modified = playlist.modified
     duration = playlist.duration_ms

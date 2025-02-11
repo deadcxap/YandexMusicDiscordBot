@@ -173,7 +173,7 @@ class General(Cog):
 
         await ctx.respond(response_message, embed=embed, ephemeral=True)
     
-    @account.command(description="Ввести токен от Яндекс Музыки.")
+    @account.command(description="Ввести токен Яндекс Музыки.")
     @discord.option("token", type=discord.SlashCommandOptionType.string, description="Токен.")
     async def login(self, ctx: discord.ApplicationContext, token: str) -> None:
         logging.info(f"[GENERAL] Login command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
@@ -190,7 +190,7 @@ class General(Cog):
         logging.info(f"[GENERAL] Token saved for user {ctx.author.id}")
         await ctx.respond(f'Привет, {about['account']['first_name']}!', delete_after=15, ephemeral=True)
     
-    @account.command(description="Удалить токен из датабазы бота.")
+    @account.command(description="Удалить токен из базы данных бота.")
     async def remove(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Remove command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
         await self.users_db.update(ctx.user.id, {'ym_token': None})
@@ -228,6 +228,60 @@ class General(Cog):
         logging.info(f"[GENERAL] Successfully fetched likes for user {ctx.user.id}")
         await ctx.respond(embed=embed, view=ListenView(tracks))
     
+    @account.command(description="Получить ваши рекомендации.")
+    @discord.option(
+        'тип',
+        parameter_name='content_type',
+        description="Вид рекомендаций.",
+        type=discord.SlashCommandOptionType.string,
+        choices=['Премьера', 'Плейлист дня', 'Дежавю']
+    )
+    async def recommendations(
+        self,
+        ctx: discord.ApplicationContext,
+        content_type: Literal['Премьера', 'Плейлист дня', 'Дежавю']
+    )-> None:
+        # NOTE: Recommendations can be accessed by using /find, but it's more convenient to have it in separate command.
+        logging.debug(f"[GENERAL] Recommendations command invoked by user {ctx.user.id} in guild {ctx.guild_id} for type '{content_type}'")
+
+        guild = await self.db.get_guild(ctx.guild_id)
+        token = await self.users_db.get_ym_token(ctx.user.id)
+        if not token:
+            await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
+            return
+
+        client = await YMClient(token).init()
+
+        search = await client.search(content_type, False, 'playlist')
+        if not search or not search.playlists:
+            logging.info(f"[GENERAL] Failed to fetch recommendations for user {ctx.user.id}")
+            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            return
+
+        playlist = search.playlists.results[0]
+        if playlist is None:
+            logging.info(f"[GENERAL] Failed to fetch recommendations for user {ctx.user.id}")
+            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+
+        tracks = await playlist.fetch_tracks_async()
+        if not tracks:
+            logging.info(f"[GENERAL] User {ctx.user.id} search for '{content_type}' returned no tracks")
+            await ctx.respond("❌ Пустой плейлист.", delete_after=15, ephemeral=True)
+            return
+
+        embed = await generate_item_embed(playlist)
+        view = ListenView(playlist)
+            
+        for track_short in playlist.tracks:
+            track = cast(Track, track_short.track)
+            if (track.explicit or track.content_warning) and not guild['allow_explicit']:
+                logging.info(f"[GENERAL] User {ctx.user.id} search for '{content_type}' returned explicit content and is not allowed on this server")
+                embed.set_footer(text="Воспроизведение недоступно, так как в плейлисте присутствуют Explicit треки")
+                view = None
+                break
+
+        await ctx.respond(embed=embed, view=view)
+
     @account.command(description="Получить ваши плейлисты.")
     async def playlists(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Playlists command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
@@ -238,11 +292,8 @@ class General(Cog):
             return
 
         client = await YMClient(token).init()
-        if not client.me or not client.me.account or not client.me.account.uid:
-            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
-            return
 
-        playlists_list = await client.users_playlists_list(client.me.account.uid)
+        playlists_list = await client.users_playlists_list()
         playlists: list[tuple[str, int]] = [
             (playlist.title if playlist.title else 'Без названия', playlist.track_count if playlist.track_count else 0) for playlist in playlists_list
         ]
@@ -274,6 +325,9 @@ class General(Cog):
         content_type: Literal['Трек', 'Альбом', 'Артист', 'Плейлист', 'Свой плейлист'],
         name: str
     ) -> None:
+        # TODO: Improve explicit check by excluding bad tracks from the queue and not fully discard the artist/album/playlist.
+        # TODO: Move 'Свой плейлист' search to /account playlists command by using select menu.
+
         logging.info(f"[GENERAL] Find command invoked by user {ctx.user.id} in guild {ctx.guild_id} for '{content_type}' with name '{name}'")
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'allow_explicit': 1})
@@ -291,12 +345,8 @@ class General(Cog):
             return
 
         if content_type == 'Свой плейлист':
-            if not client.me or not client.me.account or not client.me.account.uid:
-                logging.warning(f"Failed to get user info for user {ctx.user.id}")
-                await ctx.respond("❌ Не удалось получить информацию о пользователе.", delete_after=15, ephemeral=True)
-                return
 
-            playlists = await client.users_playlists_list(client.me.account.uid)
+            playlists = await client.users_playlists_list()
             result = next((playlist for playlist in playlists if playlist.title == name), None)
             if not result:
                 logging.info(f"[GENERAL] User {ctx.user.id} playlist '{name}' not found")
@@ -371,7 +421,7 @@ class General(Cog):
                     if (track.explicit or track.content_warning) and not guild['allow_explicit']:
                         logging.info(f"[GENERAL] User {ctx.user.id} search for '{name}' returned explicit content and is not allowed on this server")
                         view = None
-                        embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
+                        embed.set_footer(text="Воспроизведение недоступно, так как в плейлисте присутствуют Explicit треки")
                         break
         
         logging.info(f"[GENERAL] Successfully generated '{content_type}' message for user {ctx.author.id}")
