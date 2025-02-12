@@ -169,7 +169,7 @@ class MyVibeButton(Button, VoiceExtension):
         else:
             _id = 'onyourwave'
 
-        await self.send_menu_message(interaction)
+        await self.send_menu_message(interaction, disable=True)
         await self.update_vibe(
             interaction,
             track_type_map[type(self.item)],

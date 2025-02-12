@@ -276,20 +276,22 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
     duration = playlist.duration_ms
     likes_count = playlist.likes_count
 
-    color = 0x000
     cover_url = None
 
     if playlist.cover and playlist.cover.uri:
         cover_url = f"https://{playlist.cover.uri.replace('%%', '400x400')}"
     else:
         tracks = await playlist.fetch_tracks_async()
-        for i in range(len(tracks)):
-            track = tracks[i].track
-            if not track or not track.albums or not track.albums[0].cover_uri:
-                continue
+        for track_short in tracks:
+            track = track_short.track
+            if track and track.albums and track.albums[0].cover_uri:
+                cover_url = f"https://{track.albums[0].cover_uri.replace('%%', '400x400')}"
+                break
 
     if cover_url:
         color = await _get_average_color_from_url(cover_url)
+    else:
+        color = 0x000
 
     embed = Embed(
         title=title,
