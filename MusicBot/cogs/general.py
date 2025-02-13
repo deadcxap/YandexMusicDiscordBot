@@ -57,11 +57,8 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
         for item in search.playlists.results:
             res.append(f"{item.title}")
     elif content_type == "Свой плейлист":
-        if not client.me or not client.me.account or not client.me.account.uid:
-            logging.warning(f"Failed to get playlists for user {ctx.interaction.user.id}")
-        else:
-            playlists_list = await client.users_playlists_list(client.me.account.uid)
-            res = [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
+        playlists_list = await client.users_playlists_list()
+        res = [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
 
     return res[:100]
 
@@ -81,7 +78,7 @@ async def get_user_playlists_suggestions(ctx: discord.AutocompleteContext) -> li
         return []
     
     playlists_list = await client.users_playlists_list()
-    return [playlist.title if playlist.title else 'Без названия' for playlist in playlists_list]
+    return [playlist.title for playlist in playlists_list if playlist.title and ctx.value in playlist.title][:100]
 
 class General(Cog):
     
@@ -159,12 +156,12 @@ class General(Cog):
             )
         elif command == 'settings':
             embed.description += (
+                "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки.\n\n"
                 "Получить текущие настройки.\n```/settings show```\n"
                 "Разрешить или запретить воспроизведение Explicit треков и альбомов. Если автор или плейлист содержат Explicit треки, убираются кнопки для доступа к ним.\n```/settings explicit```\n"
                 "Разрешить или запретить создание меню проигрывателя, когда в канале больше одного человека.\n```/settings menu```\n"
                 "Разрешить или запретить голосование.\n```/settings vote <тип>```\n"
                 "Разрешить или запретить отключение/подключение бота к каналу участникам без прав управления каналом.\n```/settings connect```\n"
-                "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки."
             )
         elif command == 'track':
             embed.description += (
@@ -179,10 +176,10 @@ class General(Cog):
         elif command == 'voice':
             embed.description += (
                 "`Примечание`: Доступность меню и Моей Волны зависит от настроек сервера.\n\n"
-                "Присоединить бота в голосовой канал. Требует разрешения управления каналом.\n```/voice join```\n"
-                "Заставить бота покинуть голосовой канал. Требует разрешения управления каналом.\n ```/voice leave```\n"
-                "Создать меню проигрывателя. По умолчанию работает только когда в канале один человек.\n```/voice menu```\n"
-                "Запустить Мою Волну. По умолчанию работает только когда в канале один человек.\n```/vibe```"
+                "Присоединить бота в голосовой канал.\n```/voice join```\n"
+                "Заставить бота покинуть голосовой канал.\n ```/voice leave```\n"
+                "Создать меню проигрывателя. \n```/voice menu```\n"
+                "Запустить станцию. Без уточнения станции, запускает Мою Волну.\n```/voice vibe <название станции>```"
             )
         else:
             response_message = '❌ Неизвестная команда.'
@@ -410,8 +407,8 @@ class General(Cog):
             logging.info(f"[GENERAL] User {ctx.user.id} search for '{name}' returned no results")
             await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)
             return
-        content = content.results[0]
 
+        content = content.results[0]
         embed = await generate_item_embed(content)
         view = ListenView(content)
 
@@ -431,6 +428,7 @@ class General(Cog):
                     view = None
                     embed.set_footer(text="Воспроизведение недоступно, так как у автора присутствуют Explicit треки")
                     break
+
         elif isinstance(content, Playlist):
             tracks = await content.fetch_tracks_async()
             if not tracks:

@@ -153,7 +153,7 @@ class MyVibeButton(Button, VoiceExtension):
             await interaction.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
             return
 
-        track_type_map: dict[Any, Literal['track', 'album', 'artist', 'playlist', 'user']] = {
+        track_type_map = {
             Track: 'track', Album: 'album', Artist: 'artist', Playlist: 'playlist', list: 'user'
         }
 
@@ -211,7 +211,7 @@ class ListenView(View):
             self.add_item(self.button2)
             self.add_item(self.button3)
             self.add_item(self.button4)
-    
+
     async def on_timeout(self) -> None:
         try:
             return await super().on_timeout()

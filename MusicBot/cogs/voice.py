@@ -4,11 +4,36 @@ from typing import cast
 import discord
 from discord.ext.commands import Cog
 
+from yandex_music import ClientAsync as YMClient
+from yandex_music.exceptions import UnauthorizedError
+
+from MusicBot.database import BaseUsersDatabase
 from MusicBot.cogs.utils import VoiceExtension, menu_views
 from MusicBot.ui import QueueView, generate_queue_embed
 
 def setup(bot: discord.Bot):
     bot.add_cog(Voice(bot))
+
+users_db = BaseUsersDatabase()
+
+async def get_vibe_stations_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
+    if not ctx.interaction.user or not ctx.value or len(ctx.value) < 2:
+        return []
+
+    token = await users_db.get_ym_token(ctx.interaction.user.id)
+    if not token:
+        logging.info(f"[GENERAL] User {ctx.interaction.user.id} has no token")
+        return []
+
+    try:
+        client = await YMClient(token).init()
+    except UnauthorizedError:
+        logging.info(f"[GENERAL] User {ctx.interaction.user.id} provided invalid token")
+        return []
+
+    stations = await client.rotor_stations_list()
+    return [station.station.name for station in stations if station.station and ctx.value in station.station.name][:100]
+
 
 class Voice(Cog, VoiceExtension):
 
@@ -436,13 +461,19 @@ class Voice(Cog, VoiceExtension):
         if not await self.voice_check(ctx):
             return
 
-        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1, 'current_track': 1, 'current_menu': 1})
+        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1, 'current_track': 1, 'current_menu': 1, 'vibing': 1})
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
             logging.info(f"[VOICE] Action declined: other members are present in the voice channel")
             await ctx.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
             return
+
+        if guild['vibing']:
+            logging.info(f"[VOICE] Action declined: vibing is already enabled in guild {ctx.guild.id}")
+            await ctx.respond("❌ Моя Волна уже включена. Используйте /track stop, чтобы остановить воспроизведение.", ephemeral=True)
+            return
+
         if not guild['current_track']:
             logging.info(f"[VOICE] No current track in {ctx.guild.id}")
             await ctx.respond("❌ Нет воспроизводимого трека.", ephemeral=True)
@@ -452,7 +483,7 @@ class Voice(Cog, VoiceExtension):
         if not feedback:
             await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", ephemeral=True)
             return
-        
+
         if not guild['current_menu']:
             await self.send_menu_message(ctx, disable=True)
 
@@ -461,24 +492,70 @@ class Voice(Cog, VoiceExtension):
             await self._play_next_track(ctx, next_track)
 
     @voice.command(name='vibe', description="Запустить Мою Волну.")
-    async def user_vibe(self, ctx: discord.ApplicationContext) -> None:
+    @discord.option(
+        "запрос",
+        parameter_name='name',
+        description="Название станции.",
+        type=discord.SlashCommandOptionType.string,
+        autocomplete=discord.utils.basic_autocomplete(get_vibe_stations_suggestions),
+        required=False
+    )
+    async def user_vibe(self, ctx: discord.ApplicationContext, name: str | None = None) -> None:
         logging.info(f"[VOICE] Vibe (user) command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
         if not await self.voice_check(ctx):
             return
 
-        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1, 'current_menu': 1})
+        guild = await self.db.get_guild(ctx.guild.id, projection={'always_allow_menu': 1, 'current_menu': 1, 'vibing': 1})
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not guild['always_allow_menu']:
             logging.info(f"[VOICE] Action declined: other members are present in the voice channel")
             await ctx.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
             return
+        if guild['vibing']:
+            logging.info(f"[VOICE] Action declined: vibing is already enabled in guild {ctx.guild.id}")
+            await ctx.respond("❌ Моя Волна уже включена. Используйте /track stop, чтобы остановить воспроизведение.", ephemeral=True)
+            return
 
-        feedback = await self.update_vibe(ctx, 'user', 'onyourwave')
+        if name:
+            token = await users_db.get_ym_token(ctx.user.id)
+            if not token:
+                logging.info(f"[GENERAL] User {ctx.user.id} has no token")
+                return
+
+            try:
+                client = await YMClient(token).init()
+            except UnauthorizedError:
+                logging.info(f"[GENERAL] User {ctx.user.id} provided invalid token")
+                return
+
+            stations = await client.rotor_stations_list()
+            for content in stations:
+                if content.station and content.station.name == name and content.ad_params:
+                    break
+            else:
+                content = None
+
+            if not content:
+                logging.debug(f"[VOICE] Station {name} not found")
+                await ctx.respond("❌ Станция не найдена.", ephemeral=True)
+                return
+
+            _type, _id = content.ad_params.other_params.split(':') if content.ad_params else (None, None)
+
+            if not _type or not _id:
+                logging.debug(f"[VOICE] Station {name} has no ad params")
+                await ctx.respond("❌ Станция не найдена.", ephemeral=True)
+                return
+
+            feedback = await self.update_vibe(ctx, _type, _id)
+        else:
+            feedback = await self.update_vibe(ctx, 'user', 'onyourwave')
+
         if not feedback:
             await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", ephemeral=True)
             return
-        
+
         if not guild['current_menu']:
             await self.send_menu_message(ctx, disable=True)
 

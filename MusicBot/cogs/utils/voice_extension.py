@@ -231,7 +231,7 @@ class VoiceExtension:
     async def update_vibe(
         self,
         ctx: ApplicationContext | Interaction,
-        type: Literal['track', 'album', 'artist', 'playlist', 'user'],
+        type: str,
         id: str | int,
         *,
         update_settings: bool = False
@@ -241,8 +241,8 @@ class VoiceExtension:
 
         Args:
             ctx (ApplicationContext | Interaction): Context.
-            type (Literal['track', 'album', 'artist', 'playlist', 'user']): Type of the item.
-            id (str | int): ID of the YandexMusic item.
+            type (str): Type of the item.
+            id (str | int): ID of the item.
             update_settings (bool, optional): Update vibe settings by sending feedack usind data from database. Defaults to False.
 
         Returns:
