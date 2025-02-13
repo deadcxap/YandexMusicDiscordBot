@@ -17,17 +17,18 @@ cogs_list = [
 @bot.event
 async def on_ready():
     logging.info("Bot's ready!")
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="/voice vibe"))
 
 if __name__ == '__main__':
     from dotenv import load_dotenv
     load_dotenv()
-    
+
     try:
         import coloredlogs
         coloredlogs.install(level=logging.DEBUG)
     except ImportError:
         pass
-    
+
     if os.getenv('DEBUG') == 'True':
         logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger('discord').setLevel(logging.INFO)
@@ -38,14 +39,14 @@ if __name__ == '__main__':
         logging.getLogger('discord').setLevel(logging.WARNING)
         logging.getLogger('pymongo').setLevel(logging.WARNING)
         logging.getLogger('yandex_music').setLevel(logging.WARNING)
-    
+
     if not os.path.exists('music'):
         os.mkdir('music')
     token = os.getenv('TOKEN')
     if not token:
         raise ValueError('You must specify the bot TOKEN in your enviroment')
-    
+
     for cog in cogs_list:
         bot.load_extension(f'MusicBot.cogs.{cog}')
-    
+
     bot.run(token)

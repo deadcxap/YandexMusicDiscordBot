@@ -3,7 +3,6 @@ import aiofiles
 import logging
 import io
 from typing import Any, Literal, cast
-from time import time
 
 import yandex_music.exceptions
 from yandex_music import Track, TrackShort, ClientAsync as YMClient
@@ -24,16 +23,17 @@ class VoiceExtension:
         self.db = VoiceGuildsDatabase()
         self.users_db = BaseUsersDatabase()
 
-    async def send_menu_message(self, ctx: ApplicationContext | Interaction) -> bool:
+    async def send_menu_message(self, ctx: ApplicationContext | Interaction, *, disable: bool = False) -> bool:
         """Send menu message to the channel and delete old menu message if exists. Return True if sent.
 
         Args:
             ctx (ApplicationContext | Interaction): Context.
+            disable (bool, optional): Disable menu message. Defaults to False.
         
         Returns:
             bool: True if sent, False if not.
         """
-        logging.info("[VC_EXT] Sending menu message")
+        logging.info(f"[VC_EXT] Sending menu message to channel {ctx.channel_id} in guild {ctx.guild_id}")
 
         if not ctx.guild_id:
             logging.warning("[VC_EXT] Guild id not found in context inside 'create_menu'")
@@ -42,14 +42,16 @@ class VoiceExtension:
         guild = await self.db.get_guild(ctx.guild_id, projection={'current_track': 1, 'current_menu': 1, 'vibing': 1})
 
         if guild['current_track']:
+            if not (vc := await self.get_voice_client(ctx)):
+                return False
+
             track = cast(Track, Track.de_json(
                 guild['current_track'],
                 client=YMClient()  # type: ignore
             ))
             embed = await generate_item_embed(track, guild['vibing'])
 
-            vc = await self.get_voice_client(ctx)
-            if vc and vc.is_paused():
+            if vc.is_paused():
                 embed.set_footer(text='Приостановлено')
             else:
                 embed.remove_footer()
@@ -62,7 +64,7 @@ class VoiceExtension:
             if message:
                 await message.delete()
 
-        await self._update_menu_views_dict(ctx)
+        await self._update_menu_views_dict(ctx, disable=disable)
         interaction = await ctx.respond(view=menu_views[ctx.guild_id], embed=embed)
         response = await interaction.original_response() if isinstance(interaction, discord.Interaction) else interaction
         await self.db.update(ctx.guild_id, {'current_menu': response.id})
@@ -81,7 +83,7 @@ class VoiceExtension:
         Returns:
             (discord.Message | None): Menu message or None.
         """
-        logging.debug(f"[VC_EXT] Fetching menu message {menu_mid}...")
+        logging.debug(f"[VC_EXT] Fetching menu message {menu_mid} in guild {ctx.guild_id}")
 
         if not ctx.guild_id:
             logging.warning("[VC_EXT] Guild ID not found in context")
@@ -104,9 +106,9 @@ class VoiceExtension:
             return None
 
         if menu:
-            logging.debug("[VC_EXT] Menu message found")
+            logging.debug(f"[VC_EXT] Menu message {menu_mid} successfully fetched")
         else:
-            logging.debug("[VC_EXT] Menu message not found. Resetting current_menu field.")
+            logging.debug(f"[VC_EXT] Menu message {menu_mid} not found in guild {ctx.guild_id}")
             await self.db.update(ctx.guild_id, {'current_menu': None})
 
         return menu
@@ -151,11 +153,9 @@ class VoiceExtension:
             if not menu_mid:
                 logging.warning("[VC_EXT] No menu message or menu message id provided")
                 return False
-            menu = await self.get_menu_message(ctx, menu_mid)
-        else:
-            menu = menu_message
+            menu_message = await self.get_menu_message(ctx, menu_mid)
 
-        if not menu:
+        if not menu_message:
             return False
 
         if not guild['current_track']:
@@ -164,9 +164,8 @@ class VoiceExtension:
 
         track = cast(Track, Track.de_json(
             guild['current_track'],
-            client=YMClient(),  # type: ignore
+            client=YMClient()  # type: ignore
         ))
-
         embed = await generate_item_embed(track, guild['vibing'])
 
         await self._update_menu_views_dict(ctx)
@@ -176,12 +175,12 @@ class VoiceExtension:
                 await ctx.edit(embed=embed, view=menu_views[gid])
             else:
                 # If interaction from other buttons or commands. They should have their own response.
-                await menu.edit(embed=embed, view=menu_views[gid])
+                await menu_message.edit(embed=embed, view=menu_views[gid])
         except discord.NotFound:
             logging.warning("[VC_EXT] Menu message not found")
             return False
 
-        logging.debug("[VC_EXT] Menu embed updated")
+        logging.debug("[VC_EXT] Menu embed updated successfully")
         return True
 
     async def update_menu_view(
@@ -225,12 +224,14 @@ class VoiceExtension:
         except discord.NotFound:
             logging.warning("[VC_EXT] Menu message not found")
             return False
+
+        logging.debug("[VC_EXT] Menu view updated successfully")
         return True
     
     async def update_vibe(
         self,
         ctx: ApplicationContext | Interaction,
-        type: Literal['track', 'album', 'artist', 'playlist', 'user'],
+        type: str,
         id: str | int,
         *,
         update_settings: bool = False
@@ -240,15 +241,15 @@ class VoiceExtension:
 
         Args:
             ctx (ApplicationContext | Interaction): Context.
-            type (Literal['track', 'album', 'artist', 'playlist', 'user']): Type of the item.
-            id (str | int): ID of the YandexMusic item.
+            type (str): Type of the item.
+            id (str | int): ID of the item.
             update_settings (bool, optional): Update vibe settings by sending feedack usind data from database. Defaults to False.
 
         Returns:
             bool: True if vibe was updated successfully. False otherwise.
         """
         logging.info(f"[VC_EXT] Updating vibe for guild {ctx.guild_id} with type '{type}' and id '{id}'")
-        
+
         gid = ctx.guild_id
         uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
 
@@ -275,12 +276,9 @@ class VoiceExtension:
             )
 
         if not guild['vibing']:
-            logging.debug(f"[VIBE] Starting radio '{type}:{id}'")
-
             feedback = await client.rotor_station_feedback_radio_started(
                 f"{type}:{id}",
-                f"desktop-user-{client.me.account.uid}",  # type: ignore
-                timestamp=time()
+                f"desktop-user-{client.me.account.uid}",  # type: ignore  # That's made up, but it doesn't do much anyway.
             )
 
             if not feedback:
@@ -430,14 +428,15 @@ class VoiceExtension:
             logging.warning("Guild ID or User ID not found in context")
             return None
 
-        guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'vibing': 1})
+        guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'vibing': 1, 'current_track': 1})
         vc = await self.get_voice_client(ctx) if not vc else vc
 
         if not vc:
             return None
 
         try:
-            await self._download_track(gid, track)
+            if not guild['current_track'] or track.id != guild['current_track']['id']:
+                await self._download_track(gid, track)
         except yandex_music.exceptions.TimedOutError:
             logging.warning(f"[VC_EXT] Timed out while downloading track '{track.title}'")
 
@@ -457,6 +456,7 @@ class VoiceExtension:
         await self.db.set_current_track(gid, track)
 
         if menu_message or guild['current_menu']:
+            # Updating menu message before playing to prevent delay and avoid FFMPEG lags.
             await self.update_menu_full(ctx, guild['current_menu'], menu_message=menu_message, button_callback=button_callback)
 
         if not guild['vibing']:
@@ -503,9 +503,11 @@ class VoiceExtension:
         user = await self.users_db.get_user(uid, projection={'vibe_type': 1, 'vibe_id': 1, 'vibe_batch_id': 1, 'ym_token': 1})
         vc = await self.get_voice_client(ctx) if not vc else vc
 
-        if vc:
-            await self.db.update(gid, {'current_track': None, 'is_stopped': True})
-            vc.stop()
+        if not vc:
+            return False
+
+        await self.db.update(gid, {'current_track': None, 'is_stopped': True})
+        vc.stop()
 
         if full:
             if not await self._full_stop(ctx, guild, gid):
@@ -580,10 +582,10 @@ class VoiceExtension:
             logging.debug("[VC_EXT] Repeating current track")
             next_track = guild['current_track']
         elif guild['shuffle']:
-            logging.debug("[VC_EXT] Shuffling tracks")
+            logging.debug("[VC_EXT] Getting random track from queue")
             next_track = await self.db.pop_random_track(gid, 'next')
         else:
-            logging.debug("[VC_EXT] Getting next track")
+            logging.debug("[VC_EXT] Getting next track from queue")
             next_track = await self.db.get_track(gid, 'next')
         
         if not next_track and guild['vibing'] and not isinstance(ctx, discord.RawReactionActionEvent):
@@ -854,8 +856,7 @@ class VoiceExtension:
         feedback = await client.rotor_station_feedback_track_started(
             f"{user['vibe_type']}:{user['vibe_id']}",
             track.id,
-            user['vibe_batch_id'],  # type: ignore  # wrong typehints
-            time()
+            user['vibe_batch_id']  # type: ignore  # Wrong typehints
         )
         logging.debug(f"[VIBE] Track started feedback: {feedback}")
         return True
@@ -898,8 +899,7 @@ class VoiceExtension:
             f"{user['vibe_type']}:{user['vibe_id']}",
             track['id'],
             track['duration_ms'] // 1000,
-            cast(str, user['vibe_batch_id']),
-            time()
+            user['vibe_batch_id']  # type: ignore  # Wrong typehints
         )
         logging.info(f"[VOICE] User {user['_id']} finished vibing with result: {res}")
         return True
@@ -941,23 +941,21 @@ class VoiceExtension:
                 f'{user['vibe_type']}:{user['vibe_id']}',
                 guild['current_track']['id'],
                 guild['current_track']['duration_ms'] // 1000,
-                user['vibe_batch_id'],  # type: ignore  # Wrong typehints
-                time()
+                user['vibe_batch_id']  # type: ignore  # Wrong typehints
             )
-            logging.debug(f"[VIBE] Finished track: {feedback}")
+            logging.debug(f"[VIBE] Finished track feeedback: {feedback}")
         else:
             feedback = await client.rotor_station_feedback_skip(
                 f'{user['vibe_type']}:{user['vibe_id']}',
                 guild['current_track']['id'],
                 guild['current_track']['duration_ms'] // 1000,
-                user['vibe_batch_id'],  # type: ignore  # Wrong typehints
-                time()
+                user['vibe_batch_id']  # type: ignore  # Wrong typehints
             )
             if not feedback:
                 logging.warning("[VIBE] Failed to send vibe feedback")
                 return False
 
-            logging.debug(f"[VIBE] Skipped track: {feedback}")
+            logging.debug(f"[VIBE] Skipped track feeedback: {feedback}")
             feedback = await self.update_vibe(
                 ctx,
                 user['vibe_type'],
@@ -988,18 +986,21 @@ class VoiceExtension:
         Returns:
             str | None: Song title or None.
         """
-        logging.debug("[VC_EXT] Playing next track")
-
         client = await self.init_ym_client(ctx) if not client else client
 
         if not client:
+            return None
+
+        if not vc:
+            vc = await self.get_voice_client(ctx)
+
+        if not await self.stop_playing(ctx, vc=vc):
             return None
 
         ym_track = cast(Track, Track.de_json(
             next_track,
             client=client  # type: ignore  # Async client can be used here.
         ))
-        await self.stop_playing(ctx, vc=vc)
         return await self.play_track(
             ctx,
             ym_track,

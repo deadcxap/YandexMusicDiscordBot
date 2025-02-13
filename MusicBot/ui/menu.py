@@ -239,11 +239,11 @@ class MyVibeSelect(Select, VoiceExtension):
         await interaction.edit(view=view)
 
 class MyVibeSettingsView(View, VoiceExtension):
-    def __init__(self, interaction: Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
+    def __init__(self, interaction: Interaction, *items: Item, timeout: float | None = None, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
         self.interaction = interaction
-    
+
     async def init(self) -> Self:
         if not self.interaction.user:
             logging.warning('[MENU] No user in settings view')

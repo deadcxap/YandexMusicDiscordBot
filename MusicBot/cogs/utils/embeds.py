@@ -99,10 +99,13 @@ async def _generate_track_embed(track: Track) -> Embed:
 
     artist_url = f"https://music.yandex.ru/artist/{artist.id}"
     artist_cover = artist.cover
-    if not artist_cover:
+
+    if not artist_cover and artist.op_image:
         artist_cover_url = artist.get_op_image_url()
-    else:
+    elif artist_cover:
         artist_cover_url = artist_cover.get_url()
+    else:
+        artist_cover_url = None
 
     embed = Embed(
         title=title,
@@ -172,10 +175,13 @@ async def _generate_album_embed(album: Album) -> Embed:
 
     artist_url = f"https://music.yandex.ru/artist/{artist.id}"
     artist_cover = artist.cover
-    if not artist_cover:
+
+    if not artist_cover and artist.op_image:
         artist_cover_url = artist.get_op_image_url()
-    else:
+    elif artist_cover:
         artist_cover_url = artist_cover.get_url()
+    else:
+        artist_cover_url = None
 
     embed = Embed(
         title=title,
@@ -264,26 +270,28 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
     title = cast(str, playlist.title)
     track_count = playlist.track_count
     avail = cast(bool, playlist.available)
-    description = playlist.description_formatted
+    description = playlist.description
     year = playlist.created
     modified = playlist.modified
     duration = playlist.duration_ms
     likes_count = playlist.likes_count
 
-    color = 0x000
     cover_url = None
 
     if playlist.cover and playlist.cover.uri:
         cover_url = f"https://{playlist.cover.uri.replace('%%', '400x400')}"
     else:
         tracks = await playlist.fetch_tracks_async()
-        for i in range(len(tracks)):
-            track = tracks[i].track
-            if not track or not track.albums or not track.albums[0].cover_uri:
-                continue
+        for track_short in tracks:
+            track = track_short.track
+            if track and track.albums and track.albums[0].cover_uri:
+                cover_url = f"https://{track.albums[0].cover_uri.replace('%%', '400x400')}"
+                break
 
     if cover_url:
         color = await _get_average_color_from_url(cover_url)
+    else:
+        color = 0x000
 
     embed = Embed(
         title=title,
