@@ -282,14 +282,17 @@ class Voice(Cog, VoiceExtension):
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
 
-        if (vc := await self.get_voice_client(ctx)) and await self.voice_check(ctx):
+        if (vc := await self.get_voice_client(ctx)) and await self.voice_check(ctx) and vc.is_connected:
             res = await self.stop_playing(ctx, full=True)
             if res:
                 await vc.disconnect(force=True)
                 await ctx.respond("Отключение успешно!", delete_after=15, ephemeral=True)
                 logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild.id}")
+                return
             else:
                 await ctx.respond("❌ Не удалось отключиться.", delete_after=15, ephemeral=True)
+        else:
+            await ctx.respond("❌ Бот не подключен к голосовому каналу.", delete_after=15, ephemeral=True)
 
     @queue.command(description="Очистить очередь треков и историю прослушивания.")
     async def clear(self, ctx: discord.ApplicationContext) -> None:

@@ -207,6 +207,11 @@ class General(Cog):
     @account.command(description="Удалить токен из базы данных бота.")
     async def remove(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Remove command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
+        if not await self.users_db.get_ym_token(ctx.user.id):
+            logging.info(f"[GENERAL] No token found for user {ctx.author.id}")
+            await ctx.respond('❌ Токен не указан.', delete_after=15, ephemeral=True)
+            return
+
         await self.users_db.update(ctx.user.id, {'ym_token': None})
         await ctx.respond(f'Токен был удалён.', delete_after=15, ephemeral=True)
 

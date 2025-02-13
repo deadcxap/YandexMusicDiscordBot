@@ -81,7 +81,7 @@ class BaseGuildsDatabase:
         is_stopped=True,
         allow_explicit=True,
         always_allow_menu=False,
-        allow_connect=False,
+        allow_connect=True,
         vote_next_track=True,
         vote_add_track=True,
         vote_add_album=True,
