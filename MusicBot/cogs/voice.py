@@ -56,12 +56,23 @@ class Voice(Cog, VoiceExtension):
 
         channel = after.channel or before.channel
         if not channel:
-            logging.info(f"[VOICE] No channel found for member {member.id}")
+            logging.warning(f"[VOICE] No channel found for member {member.id}")
             return
 
         vc = cast(discord.VoiceClient | None, discord.utils.get(self.typed_bot.voice_clients, guild=discord_guild))
 
-        if len(channel.members) == 1 and vc:
+        for member in channel.members:
+            if member.id == self.typed_bot.user.id:  # type: ignore  # should be logged in
+                break
+        else:
+            logging.info(f"[VOICE] Bot is not in the channel {channel.id}")
+            return
+
+        if not vc:
+            logging.info(f"[VOICE] No voice client found for guild {gid}")
+            return
+
+        if len(channel.members) == 1:
             logging.info(f"[VOICE] Clearing history and stopping playback for guild {gid}")
 
             if member.guild.id in menu_views:
@@ -74,7 +85,7 @@ class Voice(Cog, VoiceExtension):
                     await message.delete()
 
             await self.db.update(gid, {
-                'previous_tracks': [], 'next_tracks': [], 'votes': [],
+                'previous_tracks': [], 'next_tracks': [], 'votes': {},
                 'current_track': None, 'current_menu': None, 'vibing': False,
                 'repeat': False, 'shuffle': False, 'is_stopped': True
             })
@@ -109,7 +120,15 @@ class Voice(Cog, VoiceExtension):
         if not channel:
             return
 
-        message = await channel.fetch_message(payload.message_id)
+        try:
+            message = await channel.fetch_message(payload.message_id)
+        except discord.Forbidden:
+            logging.info(f"[VOICE] Bot does not have permissions to read messages in channel {payload.channel_id}")
+            return
+        except discord.NotFound:
+            logging.info(f"[VOICE] Message {payload.message_id} not found in channel {payload.channel_id}")
+            return
+
         if not message or message.author.id != bot_id:
             return
 
@@ -130,7 +149,6 @@ class Voice(Cog, VoiceExtension):
             return
 
         vote_data = votes[str(payload.message_id)]
-        logging.debug(f"[VOICE] Vote data for message {payload.message_id}: {vote_data}")
 
         if payload.emoji.name == '✅':
             logging.info(f"[VOICE] User {payload.user_id} voted positively for message {payload.message_id}")
@@ -220,7 +238,15 @@ class Voice(Cog, VoiceExtension):
         if not channel:
             return
 
-        message = await channel.fetch_message(payload.message_id)
+        try:
+            message = await channel.fetch_message(payload.message_id)
+        except discord.Forbidden:
+            logging.info(f"[VOICE] Bot does not have permissions to read messages in channel {payload.channel_id}")
+            return
+        except discord.NotFound:
+            logging.info(f"[VOICE] Message {payload.message_id} not found in channel {payload.channel_id}")
+            return
+
         if not message or message.author.id != self.typed_bot.user.id:
             return
 
