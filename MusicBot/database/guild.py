@@ -13,7 +13,6 @@ class Guild(TypedDict, total=False):
     current_track: dict[str, Any] | None
     current_menu: int | None
     is_stopped: bool
-    allow_explicit: bool
     always_allow_menu: bool
     allow_connect: bool
     vote_next_track: bool
@@ -34,7 +33,6 @@ class ExplicitGuild(TypedDict):
     current_track: dict[str, Any] | None
     current_menu: int | None
     is_stopped: bool  # Prevents the `after` callback of play_track
-    allow_explicit: bool
     always_allow_menu: bool
     allow_connect: bool
     vote_next_track: bool

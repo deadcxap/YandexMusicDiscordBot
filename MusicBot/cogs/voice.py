@@ -47,25 +47,22 @@ class Voice(Cog, VoiceExtension):
 
     @Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
-        logging.info(f"[VOICE] Voice state update for member {member.id} in guild {member.guild.id}")
-
         gid = member.guild.id
         guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'always_allow_menu': 1})
-        discord_guild = await self.typed_bot.fetch_guild(gid)
-        current_menu = guild['current_menu']
 
         channel = after.channel or before.channel
         if not channel:
             logging.warning(f"[VOICE] No channel found for member {member.id}")
             return
 
-        vc = cast(discord.VoiceClient | None, discord.utils.get(self.typed_bot.voice_clients, guild=discord_guild))
+        vc = cast(discord.VoiceClient | None, discord.utils.get(self.typed_bot.voice_clients, guild=await self.typed_bot.fetch_guild(gid)))
 
         for member in channel.members:
             if member.id == self.typed_bot.user.id:  # type: ignore  # should be logged in
+                logging.info(f"[VOICE] Voice state update for member {member.id} in guild {member.guild.id}")
                 break
         else:
-            logging.info(f"[VOICE] Bot is not in the channel {channel.id}")
+            logging.debug(f"[VOICE] Bot is not in the channel {channel.id}")
             return
 
         if not vc:
@@ -91,12 +88,12 @@ class Voice(Cog, VoiceExtension):
             })
             vc.stop()
         elif len(channel.members) > 2 and not guild['always_allow_menu']:
-            if current_menu:
+            if guild['current_menu']:
                 logging.info(f"[VOICE] Disabling current menu for guild {gid} due to multiple members")
 
                 await self.db.update(gid, {'current_menu': None, 'repeat': False, 'shuffle': False, 'vibing': False})
                 try:
-                    message = await channel.fetch_message(current_menu)
+                    message = await channel.fetch_message(guild['current_menu'])
                     await message.delete()
                     await channel.send("Меню отключено из-за большого количества участников.", delete_after=15)
                 except (discord.NotFound, discord.Forbidden):

@@ -79,7 +79,6 @@ class BaseGuildsDatabase:
         current_track=None,
         current_menu=None,
         is_stopped=True,
-        allow_explicit=True,
         always_allow_menu=False,
         allow_connect=True,
         vote_next_track=True,

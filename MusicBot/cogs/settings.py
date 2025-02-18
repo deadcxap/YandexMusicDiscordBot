@@ -20,13 +20,11 @@ class Settings(Cog):
     @settings.command(name="show", description="Показать текущие настройки бота.")
     async def show(self, ctx: discord.ApplicationContext) -> None:
         guild = await self.db.get_guild(ctx.guild.id, projection={
-            'allow_explicit': 1, 'always_allow_menu': 1,
-            'vote_next_track': 1, 'vote_add_track': 1, 'vote_add_album': 1, 'vote_add_artist': 1, 'vote_add_playlist': 1,
-            'allow_connect': 1, 'allow_disconnect': 1
+            'always_allow_menu': 1, 'allow_connect': 1, 'allow_disconnect': 1,
+            'vote_next_track': 1, 'vote_add_track': 1, 'vote_add_album': 1, 'vote_add_artist': 1, 'vote_add_playlist': 1
         })
         embed = discord.Embed(title="Настройки бота", color=0xfed42b)
 
-        explicit = "✅ - Разрешены" if guild['allow_explicit'] else "❌ - Запрещены"
         menu = "✅ - Всегда доступно" if guild['always_allow_menu'] else "❌ - Если в канале 1 человек."
         
         vote = "✅ - Переключение" if guild['vote_next_track'] else "❌ - Переключение"
@@ -37,10 +35,9 @@ class Settings(Cog):
 
         connect = "\n✅ - Разрешено всем" if guild['allow_connect'] else "\n❌ - Только для участникам с правами управления каналом"
 
-        embed.add_field(name="__Explicit треки__", value=explicit, inline=False)
         embed.add_field(name="__Меню проигрывателя__", value=menu, inline=False)
         embed.add_field(name="__Голосование__", value=vote, inline=False)
-        embed.add_field(name="__Подключение и Отключение__", value=connect, inline=False)
+        embed.add_field(name="__Подключение/Отключение__", value=connect, inline=False)
 
         await ctx.respond(embed=embed, ephemeral=True)
     
@@ -54,17 +51,6 @@ class Settings(Cog):
         guild = await self.db.get_guild(ctx.guild.id, projection={'allow_connect': 1})
         await self.db.update(ctx.guild.id, {'allow_connect': not guild['allow_connect']})
         await ctx.respond(f"Отключение/подключение бота к каналу теперь {'✅ разрешено' if not guild['allow_connect'] else '❌ запрещено'} участникам без прав управления каналом.", delete_after=15, ephemeral=True)
-    
-    @settings.command(name="explicit", description="Разрешить или запретить воспроизведение Explicit треков (пока что неполноценно).")
-    async def explicit(self, ctx: discord.ApplicationContext) -> None:
-        member = cast(discord.Member, ctx.author)
-        if not member.guild_permissions.manage_channels:
-            await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
-            return
-
-        guild = await self.db.get_guild(ctx.guild.id, projection={'allow_explicit': 1})
-        await self.db.update(ctx.guild.id, {'allow_explicit': not guild['allow_explicit']})
-        await ctx.respond(f"Треки с содержанием не для детей теперь {'✅ разрешены' if not guild['allow_explicit'] else '❌ запрещены'}.", delete_after=15, ephemeral=True)
 
     @settings.command(name="menu", description="Разрешить или запретить использование меню проигрывателя, если в канале больше одного человека.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
