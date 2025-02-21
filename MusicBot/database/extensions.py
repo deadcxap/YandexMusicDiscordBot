@@ -19,28 +19,29 @@ class VoiceGuildsDatabase(BaseGuildsDatabase):
         if list_type not in ('next', 'previous', 'current'):
             raise ValueError("list_type must be either 'next' or 'previous'")
         
-        if list_type == 'current':
-            return (await self.get_guild(gid, projection={'current_track': 1}))['current_track']
-        
         field = f'{list_type}_tracks'
-        update = {'$pop': {field: -1}}
+        guild = await self.get_guild(gid, projection={'current_track': 1, field: 1})
+
+        if list_type == 'current':
+            return guild['current_track']
+        
         result = await guilds.find_one_and_update(
             {'_id': gid},
-            update,
+            {'$pop': {field: -1}},
             projection={field: 1},
             return_document=ReturnDocument.BEFORE
         )
 
-        res = result.get(field, [])[0] if result and result.get(field) else None
+        res = result.get(field, []) if result else None
 
         if field == 'previous_tracks' and res:
             await guilds.find_one_and_update(
                 {'_id': gid},
-                {'$push': {'next_tracks': {'$each': [res], '$position': 0}}},
+                {'$push': {'next_tracks': {'$each': [guild['current_track']], '$position': 0}}},
                 projection={'next_tracks': 1}
             )
 
-        return res
+        return res[0] if res else None
 
     async def modify_track(
         self,
