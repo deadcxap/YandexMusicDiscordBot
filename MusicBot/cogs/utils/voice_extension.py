@@ -259,10 +259,11 @@ class VoiceExtension:
     
     async def update_vibe(
         self,
-        ctx: ApplicationContext | Interaction,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
         type: str,
         id: str | int,
         *,
+        viber_id: int | None = None,
         update_settings: bool = False
     ) -> bool:
         """Update vibe state or initialize it if not `guild['vibing']` and replace queue with next tracks.
@@ -272,6 +273,7 @@ class VoiceExtension:
             ctx (ApplicationContext | Interaction): Context.
             type (str): Type of the item.
             id (str | int): ID of the item.
+            viber_id (int | None, optional): ID of the user who started vibe. If None, uses user id in context. Defaults to None.
             update_settings (bool, optional): Update vibe settings by sending feedack usind data from database. Defaults to False.
 
         Returns:
@@ -280,7 +282,7 @@ class VoiceExtension:
         logging.info(f"[VC_EXT] Updating vibe for guild {ctx.guild_id} with type '{type}' and id '{id}'")
 
         gid = ctx.guild_id
-        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        uid = viber_id if viber_id else ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
 
         if not uid or not gid:
             logging.warning("[VC_EXT] Guild ID or User ID not found in context inside 'vibe_update'")
@@ -385,8 +387,7 @@ class VoiceExtension:
         
         if check_vibe_privilage:
             guild = await self.db.get_guild(ctx.guild.id, projection={'current_viber_id': 1, 'vibing': 1})
-            member = cast(discord.Member, ctx.user)
-            if guild['vibing'] and ctx.user.id != guild['current_viber_id'] and not member.guild_permissions.manage_channels:
+            if guild['vibing'] and ctx.user.id != guild['current_viber_id']:
                 logging.debug("[VIBE] Context user is not the current viber")
                 await ctx.respond("❌ Вы не можете взаимодействовать с чужой волной!", delete_after=15, ephemeral=True)
                 return False
@@ -826,23 +827,27 @@ class VoiceExtension:
         """
         logging.info(f"[VOICE] Performing '{vote_data['action']}' action for message {ctx.message_id}")
 
+        if not ctx.guild_id:
+            logging.warning("[VOICE] Guild not found")
+            return False
+
         if not guild['current_menu']:
             await self.send_menu_message(ctx)
 
         if vote_data['action'] in ('next', 'previous'):
             if not guild.get(f'{vote_data['action']}_tracks'):
+                logging.info(f"[VOICE] No {vote_data['action']} tracks found for message {ctx.message_id}")
                 await channel.send(content=f"❌ Очередь пуста!", delete_after=15)
 
             elif not (await self.next_track(ctx) if vote_data['action'] == 'next' else await self.previous_track(ctx)):
                 await channel.send(content=f"❌ Ошибка при смене трека! Попробуйте ещё раз.", delete_after=15)
 
         elif vote_data['action'] == 'add_track':
-            track = vote_data['vote_content']
-            if not track:
+            if not vote_data['vote_content']:
                 logging.info(f"[VOICE] Recieved empty vote context for message {ctx.message_id}")
                 return False
 
-            await self.db.modify_track(guild['_id'], track, 'next', 'append')
+            await self.db.modify_track(guild['_id'], vote_data['vote_content'], 'next', 'append')
 
             if guild['current_track']:
                 await channel.send(content=f"✅ Трек был добавлен в очередь!", delete_after=15)
@@ -851,13 +856,12 @@ class VoiceExtension:
                     await channel.send(content=f"❌ Ошибка при воспроизведении! Попробуйте ещё раз.", delete_after=15)
 
         elif vote_data['action'] in ('add_album', 'add_artist', 'add_playlist'):
-            tracks = vote_data['vote_content']
-            if not tracks:
+            if not vote_data['vote_content']:
                 logging.info(f"[VOICE] Recieved empty vote context for message {ctx.message_id}")
                 return False
 
             await self.db.update(guild['_id'], {'is_stopped': False})
-            await self.db.modify_track(guild['_id'], tracks, 'next', 'extend')
+            await self.db.modify_track(guild['_id'], vote_data['vote_content'], 'next', 'extend')
 
             if guild['current_track']:
                 await channel.send(content=f"✅ Контент был добавлен в очередь!", delete_after=15)
@@ -866,8 +870,7 @@ class VoiceExtension:
                     await channel.send(content=f"❌ Ошибка при воспроизведении! Попробуйте ещё раз.", delete_after=15)
 
         elif vote_data['action'] == 'play/pause':
-            vc = await self.get_voice_client(ctx)
-            if not vc:
+            if not (vc := await self.get_voice_client(ctx)):
                 await channel.send(content=f"❌ Ошибка при изменении воспроизведения! Попробуйте ещё раз.", delete_after=15)
                 return False
 
@@ -882,8 +885,37 @@ class VoiceExtension:
             await self.db.update(guild['_id'], {vote_data['action']: not guild[vote_data['action']]})
             await self.update_menu_view(ctx)
 
+        elif vote_data['action'] == 'clear_queue':
+            await self.db.update(ctx.guild_id, {'previous_tracks': [], 'next_tracks': []})
+            await channel.send("✅ Очередь и история сброшены.", delete_after=15)
+
+        elif vote_data['action'] == 'stop':
+            res = await self.stop_playing(ctx, full=True)
+            if res:
+                await channel.send("✅ Воспроизведение остановлено.", delete_after=15)
+            else:
+                await channel.send("❌ Произошла ошибка при остановке воспроизведения.", delete_after=15)
+        
+        elif vote_data['action'] == 'vibe_station':
+            _type, _id, viber_id = vote_data['vote_content'] if isinstance(vote_data['vote_content'], list) else (None, None, None)
+            
+            if not _type or not _id or not viber_id:
+                logging.warning(f"[VOICE] Recieved empty vote context for message {ctx.message_id}")
+                await channel.send("❌ Произошла ошибка при обновлении станции.", delete_after=15)
+                return False
+
+            feedback = await self.update_vibe(ctx, _type, _id, viber_id=viber_id)
+
+            if not feedback:
+                await channel.send("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15)
+                return False
+
+            next_track = await self.db.get_track(ctx.guild_id, 'next')
+            if next_track:
+                await self._play_track(ctx, next_track)
+
         else:
-            logging.warning(f"[VOICE] Unknown action '{vote_data['action']}' for message {ctx.message_id}")
+            logging.error(f"[VOICE] Unknown action '{vote_data['action']}' for message {ctx.message_id}")
             return False
 
         return True

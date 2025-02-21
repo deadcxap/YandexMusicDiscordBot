@@ -260,16 +260,38 @@ class Voice(Cog, VoiceExtension):
     async def clear(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Clear queue command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
 
+        if not await self.voice_check(ctx):
+            return
+
         member = cast(discord.Member, ctx.author)
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
-            logging.info(f"[VOICE] User {ctx.author.id} does not have permissions to execute leave command in guild {ctx.guild.id}")
-            await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
-        elif await self.voice_check(ctx):
-            await self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': []})
-            await ctx.respond("✅ Очередь и история сброшены.", delete_after=15, ephemeral=True)
-            logging.info(f"[VOICE] Queue and history cleared in guild {ctx.guild.id}")
+            logging.info(f"Starting vote for stopping playback in guild {ctx.guild.id}")
+            
+            response_message = f"{member.mention} хочет очистить историю прослушивания и очередь треков.\n\n Выполнить действие?."
+            message = cast(discord.Interaction, await ctx.respond(response_message, delete_after=60))
+            response = await message.original_response()
+
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            
+            await self.db.update_vote(
+                ctx.guild_id,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'clear_queue',
+                    'vote_content': None
+                }
+            )
+            return
+
+        await self.db.update(ctx.guild.id, {'previous_tracks': [], 'next_tracks': []})
+        await ctx.respond("✅ Очередь и история сброшены.", delete_after=15, ephemeral=True)
+        logging.info(f"[VOICE] Queue and history cleared in guild {ctx.guild.id}")
 
     @queue.command(description="Получить очередь треков.")
     async def get(self, ctx: discord.ApplicationContext) -> None:
@@ -289,19 +311,40 @@ class Voice(Cog, VoiceExtension):
     async def stop(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Stop command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
 
+        if not await self.voice_check(ctx):
+            return
+
         member = cast(discord.Member, ctx.author)
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
-            logging.info(f"[VOICE] User {ctx.author.id} tried to stop playback in guild {ctx.guild.id} but there are other users in the channel")
-            await ctx.respond("❌ Вы не можете остановить воспроизведение, пока в канале находятся другие пользователи.", delete_after=15, ephemeral=True)
+            logging.info(f"Starting vote for stopping playback in guild {ctx.guild.id}")
 
-        elif await self.voice_check(ctx):
-            res = await self.stop_playing(ctx, full=True)
-            if res:
-                await ctx.respond("✅ Воспроизведение остановлено.", delete_after=15, ephemeral=True)
-            else:
-                await ctx.respond("❌ Произошла ошибка при остановке воспроизведения.", delete_after=15, ephemeral=True)
+            response_message = f"{member.mention} хочет полностью остановить проигрывание.\n\n Выполнить действие?."
+            message = cast(discord.Interaction, await ctx.respond(response_message, delete_after=60))
+            response = await message.original_response()
+
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+
+            await self.db.update_vote(
+                ctx.guild_id,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'stop',
+                    'vote_content': None
+                }
+            )
+            return
+
+        res = await self.stop_playing(ctx, full=True)
+        if res:
+            await ctx.respond("✅ Воспроизведение остановлено.", delete_after=15, ephemeral=True)
+        else:
+            await ctx.respond("❌ Произошла ошибка при остановке воспроизведения.", delete_after=15, ephemeral=True)
 
     @voice.command(name='vibe', description="Запустить Мою Волну.")
     @discord.option(
@@ -321,7 +364,7 @@ class Voice(Cog, VoiceExtension):
 
         if guild['vibing']:
             logging.info(f"[VOICE] Action declined: vibing is already enabled in guild {ctx.guild.id}")
-            await ctx.respond("❌ Моя Волна уже включена. Используйте /track stop, чтобы остановить воспроизведение.", delete_after=15, ephemeral=True)
+            await ctx.respond("❌ Моя Волна уже включена. Используйте /voice stop, чтобы остановить воспроизведение.", delete_after=15, ephemeral=True)
             return
 
         await ctx.defer(invisible=False)
@@ -357,7 +400,42 @@ class Voice(Cog, VoiceExtension):
                 return
         else:
             _type, _id = 'user', 'onyourwave'
+            content = None
+        
+        member = cast(discord.Member, ctx.author)
+        channel = cast(discord.VoiceChannel, ctx.channel)
+        
+        if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            logging.info(f"Starting vote for stopping playback in guild {ctx.guild.id}")
 
+            if _type == 'user' and _id == 'onyourwave':
+                station = "Моя Волна"
+            elif content and content.station:
+                station = content.station.name
+            else:
+                logging.warning(f"[VOICE] Station {name} not found")
+                await ctx.respond("❌ Станция не найдена.", delete_after=15, ephemeral=True)
+                return
+
+            response_message = f"{member.mention} хочет запустить станцию **{station}**.\n\n Выполнить действие?"
+            message = cast(discord.WebhookMessage, await ctx.respond(response_message, delete_after=60))
+
+            await message.add_reaction('✅')
+            await message.add_reaction('❌')
+            
+            await self.db.update_vote(
+                ctx.guild_id,
+                message.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'vibe_station',
+                    'vote_content': [_type, _id, ctx.user.id]
+                }
+            )
+            return
+        
         feedback = await self.update_vibe(ctx, _type, _id)
 
         if not feedback:

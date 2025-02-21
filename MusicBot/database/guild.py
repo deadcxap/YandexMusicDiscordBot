@@ -4,7 +4,10 @@ class MessageVotes(TypedDict):
     positive_votes: list[int]
     negative_votes: list[int]
     total_members: int
-    action: Literal['next', 'play/pause', 'repeat', 'shuffle', 'previous', 'add_track', 'add_album', 'add_artist', 'add_playlist']
+    action: Literal[
+        'next', 'play/pause', 'stop', 'repeat', 'shuffle', 'previous', 'add_track',
+        'add_album', 'add_artist', 'add_playlist', 'vibe_station', 'clear_queue'
+    ]
     vote_content: Any | None
 
 class Guild(TypedDict, total=False):
