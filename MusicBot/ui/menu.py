@@ -322,7 +322,7 @@ class MyVibeSelect(Select, VoiceExtension):
         
         custom_id = interaction.custom_id
         if custom_id not in ('diversity', 'mood', 'lang'):
-            logging.warning(f'[MENU] Unknown custom_id: {custom_id}')
+            logging.error(f'[MENU] Unknown custom_id: {custom_id}')
             return
 
         if not interaction.data:
@@ -335,7 +335,7 @@ class MyVibeSelect(Select, VoiceExtension):
             'favorite', 'popular', 'discover', 'default',
             'not-russian', 'russian', 'without-words', 'any'
         ):
-            logging.warning(f'[MENU] Unknown data_value: {data_values}')
+            logging.error(f'[MENU] Unknown data_value: {data_values}')
             return
 
         logging.info(f"[MENU] Settings option '{custom_id}' updated to '{data_values[0]}'")

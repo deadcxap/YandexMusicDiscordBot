@@ -93,7 +93,7 @@ class Voice(Cog, VoiceExtension):
 
     @Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
-        logging.info(f"[VOICE] Reaction added by user {payload.user_id} in channel {payload.channel_id}")
+        logging.debug(f"[VOICE] Reaction added by user {payload.user_id} in channel {payload.channel_id}")
         if not self.typed_bot.user or not payload.member:
             return
 
@@ -160,7 +160,7 @@ class Voice(Cog, VoiceExtension):
 
     @Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
-        logging.info(f"[VOICE] Reaction removed by user {payload.user_id} in channel {payload.channel_id}")
+        logging.debug(f"[VOICE] Reaction removed by user {payload.user_id} in channel {payload.channel_id}")
         if not self.typed_bot.user:
             return
 
@@ -267,7 +267,7 @@ class Voice(Cog, VoiceExtension):
         channel = cast(discord.VoiceChannel, ctx.channel)
 
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
-            logging.info(f"Starting vote for stopping playback in guild {ctx.guild.id}")
+            logging.info(f"Starting vote for clearing queue in guild {ctx.guild.id}")
             
             response_message = f"{member.mention} хочет очистить историю прослушивания и очередь треков.\n\n Выполнить действие?."
             message = cast(discord.Interaction, await ctx.respond(response_message, delete_after=60))
@@ -406,7 +406,7 @@ class Voice(Cog, VoiceExtension):
         channel = cast(discord.VoiceChannel, ctx.channel)
         
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
-            logging.info(f"Starting vote for stopping playback in guild {ctx.guild.id}")
+            logging.info(f"Starting vote for starting vibe in guild {ctx.guild.id}")
 
             if _type == 'user' and _id == 'onyourwave':
                 station = "Моя Волна"
@@ -418,7 +418,7 @@ class Voice(Cog, VoiceExtension):
                 return
 
             response_message = f"{member.mention} хочет запустить станцию **{station}**.\n\n Выполнить действие?"
-            message = cast(discord.WebhookMessage, await ctx.respond(response_message, delete_after=60))
+            message = cast(discord.WebhookMessage, await ctx.respond(response_message))
 
             await message.add_reaction('✅')
             await message.add_reaction('❌')

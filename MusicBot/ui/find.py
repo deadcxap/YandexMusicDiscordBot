@@ -88,9 +88,9 @@ class PlayButton(Button, VoiceExtension):
             raise ValueError(f"Unknown item type: '{type(self.item).__name__}'")
 
         if guild['vote_add'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
-            logging.debug(f"Starting vote for '{action}' (from PlayButton callback)")
+            logging.info(f"Starting vote for '{action}' (from PlayButton callback)")
 
-            message = cast(discord.Interaction, await interaction.respond(vote_message, delete_after=30))
+            message = cast(discord.Interaction, await interaction.respond(vote_message, delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')

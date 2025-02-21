@@ -27,7 +27,7 @@ class VoiceExtension:
         """Send menu message to the channel and delete old menu message if exists. Return True if sent.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             disable (bool, optional): Disable menu message. Defaults to False.
 
         Raises:
@@ -96,7 +96,7 @@ class VoiceExtension:
         Reset `current_menu` field in the database if not found.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             menu_mid (int): Id of the menu message to fetch.
 
         Returns:
@@ -142,7 +142,7 @@ class VoiceExtension:
         """Update embed and view of the current menu message. Return True if updated.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             menu_mid (int): Id of the menu message to update. Defaults to None.
             menu_message (discord.Message | None): Message to update. If None, fetches menu from channel using `menu_mid`. Defaults to None.
             button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
@@ -270,7 +270,7 @@ class VoiceExtension:
         User's vibe has type `user` and id `onyourwave`.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             type (str): Type of the item.
             id (str | int): ID of the item.
             viber_id (int | None, optional): ID of the user who started vibe. If None, uses user id in context. Defaults to None.
@@ -399,7 +399,7 @@ class VoiceExtension:
         """Return voice client for the given guild id. Return None if not present.
 
         Args:
-            ctx (ApplicationContext | Interaction): Command context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Command context.
 
         Returns:
             (discord.VoiceClient | None): Voice client or None.
@@ -441,7 +441,7 @@ class VoiceExtension:
         Send vibe feedback for playing track if vibing. Should be called when voice requirements are met.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             track (Track): Track to play.
             vc (discord.VoiceClient | None): Voice client.
             menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
@@ -472,10 +472,13 @@ class VoiceExtension:
 
             if not isinstance(ctx, RawReactionActionEvent) and ctx.channel:
                 channel = cast(discord.VoiceChannel, ctx.channel)
+            elif self.bot and isinstance(ctx, RawReactionActionEvent):
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
 
                 if not retry:
                     return await self.play_track(ctx, track, vc=vc, button_callback=button_callback, retry=True)
 
+                logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
                 await channel.send(f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
             return None
 
@@ -500,6 +503,10 @@ class VoiceExtension:
             logging.error(f"[VC_EXT] Error while playing track '{track.title}': {e}")
             if not isinstance(ctx, RawReactionActionEvent):
                 await ctx.respond(f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15, ephemeral=True)
+            elif self.bot:
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                await channel.send(f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15)
+            return None
 
         logging.info(f"[VC_EXT] Playing track '{track.title}'")
         await self.db.update(gid, {'is_stopped': False})
@@ -568,7 +575,7 @@ class VoiceExtension:
         Doesn't change track if stopped. Stop playing if tracks list is empty.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context
             vc (discord.VoiceClient, optional): Voice client.
             after (bool, optional): Whether the function is being called by the after callback. Defaults to False.
             menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
@@ -609,9 +616,14 @@ class VoiceExtension:
         if after and guild['current_menu']:
             await self.update_menu_view(ctx, menu_message=menu_message, disable=True)
 
-        if guild['vibing'] and guild['current_track'] and not isinstance(ctx, discord.RawReactionActionEvent):
+        if guild['vibing'] and guild['current_track']:
             if not await self._my_vibe_feedback(ctx, guild, user, client, after=after):
-                await ctx.respond("❌ Что-то пошло не так. Попробуйте снова.", ephemeral=True)
+                if not isinstance(ctx, RawReactionActionEvent):
+                    await ctx.respond("❌ Что-то пошло не так. Попробуйте снова.", ephemeral=True)
+                elif self.bot:
+                    channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                    await channel.send("❌ Что-то пошло не так. Попробуйте снова.", delete_after=15)
+
                 return None
 
         if guild['repeat'] and after:
@@ -624,7 +636,7 @@ class VoiceExtension:
             logging.debug("[VC_EXT] Getting next track from queue")
             next_track = await self.db.get_track(gid, 'next')
         
-        if not next_track and guild['vibing'] and not isinstance(ctx, discord.RawReactionActionEvent):
+        if not next_track and guild['vibing']:
             logging.debug("[VC_EXT] No next track found, generating new vibe")
             if not user['vibe_type'] or not user['vibe_id']:
                 logging.warning("[VC_EXT] No vibe type or vibe id found in user data")
@@ -659,7 +671,7 @@ class VoiceExtension:
         Return track title on success.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             button_callback (bool, optional): Whether the command was called by a button interaction. Defaults to False.
 
         Returns:
@@ -696,7 +708,7 @@ class VoiceExtension:
         """Get liked tracks. Return list of tracks on success. Return None if no token found.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
 
         Returns:
             (list[Track] | None): List of tracks or None.
@@ -779,7 +791,7 @@ class VoiceExtension:
         """Initialize Yandex Music client. Return client on success. Return None if no token found and respond to the context.
         
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             token (str | None, optional): Token. Fetched from database if not provided. Defaults to None.
         
         Returns:
@@ -989,6 +1001,7 @@ class VoiceExtension:
         """Send vibe start feedback to Yandex Music. Return True on success.
 
         Args:
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             track (Track): Track.
             uid (int): User ID.
         
@@ -1037,6 +1050,9 @@ class VoiceExtension:
             logging.info(f"[VOICE] Failed to init YM client for user {user['_id']}")
             if not isinstance(ctx, RawReactionActionEvent):
                 await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
+            elif self.bot:
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                await channel.send("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15)
             return False
 
         track = guild['current_track']
@@ -1055,7 +1071,7 @@ class VoiceExtension:
 
     async def _my_vibe_feedback(
         self,
-        ctx: ApplicationContext | Interaction,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
         guild: ExplicitGuild,
         user: ExplicitUser,
         client: YMClient,
@@ -1066,7 +1082,7 @@ class VoiceExtension:
         This is called when a user skips a track or when a track finishes and not when a user stops the player.
 
         Args:
-            ctx (ApplicationContext | Interaction): Context.
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             guild (ExplicitGuild): Guild.
             user (ExplicitUser): User.
             client (YMClient): Yandex Music client.
