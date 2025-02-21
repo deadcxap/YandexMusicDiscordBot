@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Literal, cast
+from typing import cast
 
 import discord
 from yandex_music import Track, Album, Artist, Playlist
@@ -27,40 +27,39 @@ class PlayButton(Button, VoiceExtension):
             return
 
         gid = interaction.guild.id
-        guild = await self.db.get_guild(gid, projection={'current_track': 1, 'current_menu': 1, 'vote_add_track': 1, 'vote_add_album': 1, 'vote_add_artist': 1, 'vote_add_playlist': 1})
+        guild = await self.db.get_guild(gid, projection={'current_track': 1, 'current_menu': 1, 'vote_add': 1})
         channel = cast(discord.VoiceChannel, interaction.channel)
         member = cast(discord.Member, interaction.user)
-        action: Literal['add_track', 'add_album', 'add_artist', 'add_playlist']
 
         if isinstance(self.item, Track):
             tracks = [self.item]
             action = 'add_track'
             vote_message = f"{member.mention} хочет добавить трек **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
-            response_message = f"Трек **{self.item.title}** был добавлен в очередь."
+            response_message = f"✅ Трек **{self.item.title}** был добавлен в очередь."
 
         elif isinstance(self.item, Album):
             album = await self.item.with_tracks_async()
             if not album or not album.volumes:
                 logging.debug("[FIND] Failed to fetch album tracks in PlayButton callback")
-                await interaction.respond("Не удалось получить треки альбома.", ephemeral=True)
+                await interaction.respond("❌ Не удалось получить треки альбома.", ephemeral=True)
                 return
 
             tracks = [track for volume in album.volumes for track in volume]
             action = 'add_album'
             vote_message = f"{member.mention} хочет добавить альбом **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
-            response_message = f"Альбом **{self.item.title}** был добавлен в очередь."
+            response_message = f"✅ Альбом **{self.item.title}** был добавлен в очередь."
 
         elif isinstance(self.item, Artist):
             artist_tracks = await self.item.get_tracks_async()
             if not artist_tracks:
                 logging.debug("[FIND] Failed to fetch artist tracks in PlayButton callback")
-                await interaction.respond("Не удалось получить треки артиста.", ephemeral=True)
+                await interaction.respond("❌ Не удалось получить треки артиста.", ephemeral=True)
                 return
 
             tracks = artist_tracks.tracks.copy()
             action = 'add_artist'
             vote_message = f"{member.mention} хочет добавить треки от **{self.item.name}** в очередь.\n\n Голосуйте за добавление."
-            response_message = f"Песни артиста **{self.item.name}** были добавлены в очередь."
+            response_message = f"✅ Песни артиста **{self.item.name}** были добавлены в очередь."
 
         elif isinstance(self.item, Playlist):
             short_tracks = await self.item.fetch_tracks_async()
@@ -72,7 +71,7 @@ class PlayButton(Button, VoiceExtension):
             tracks = [cast(Track, short_track.track) for short_track in short_tracks]
             action = 'add_playlist'
             vote_message = f"{member.mention} хочет добавить плейлист **{self.item.title}** в очередь.\n\n Голосуйте за добавление."
-            response_message = f"Плейлист **{self.item.title}** был добавлен в очередь."
+            response_message = f"✅ Плейлист **{self.item.title}** был добавлен в очередь."
 
         elif isinstance(self.item, list):
             tracks = self.item.copy()
@@ -83,12 +82,12 @@ class PlayButton(Button, VoiceExtension):
 
             action = 'add_playlist'
             vote_message = f"{member.mention} хочет добавить плейлист **Мне Нравится** в очередь.\n\n Голосуйте за добавление."
-            response_message = f"Плейлист **«Мне нравится»** был добавлен в очередь."
+            response_message = f"✅ Плейлист **«Мне нравится»** был добавлен в очередь."
 
         else:
             raise ValueError(f"Unknown item type: '{type(self.item).__name__}'")
 
-        if guild.get(f'vote_{action}') and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+        if guild['vote_add'] and len(channel.members) > 2 and not member.guild_permissions.manage_channels:
             logging.debug(f"Starting vote for '{action}' (from PlayButton callback)")
 
             message = cast(discord.Interaction, await interaction.respond(vote_message, delete_after=30))
@@ -108,26 +107,28 @@ class PlayButton(Button, VoiceExtension):
                     'vote_content': [track.to_dict() for track in tracks]
                 }
             )
+            return
+
+        logging.debug(f"[FIND] Skipping vote for '{action}'")
+
+        if guild['current_menu']:
+            await interaction.respond(response_message, delete_after=15)
         else:
-            logging.debug(f"[FIND] Skipping vote for '{action}' (from PlayButton callback)")
+            await self.send_menu_message(interaction, disable=True)
 
-            current_menu = await self.get_menu_message(interaction, guild['current_menu']) if guild['current_menu'] else None
+        if guild['current_track'] is not None:
+            logging.debug(f"[FIND] Adding tracks to queue")
+            await self.db.modify_track(gid, tracks, 'next', 'extend')
+        else:
+            logging.debug(f"[FIND] Playing track")
+            track = tracks.pop(0)
+            await self.db.modify_track(gid, tracks, 'next', 'extend')
+            await self.play_track(interaction, track)
 
-            if guild['current_track'] is not None:
-                logging.debug(f"[FIND] Adding tracks to queue (from PlayButton callback)")
-                await self.db.modify_track(gid, tracks, 'next', 'extend')
-            else:
-                logging.debug(f"[FIND] Playing track (from PlayButton callback)")
-                track = tracks.pop(0)
-                await self.db.modify_track(gid, tracks, 'next', 'extend')
-                await self.play_track(interaction, track)
-                response_message = f"Сейчас играет: **{track.title}**!"
-
-            if current_menu and interaction.message:
-                logging.debug(f"[FIND] Deleting interaction message {interaction.message.id}: current player {current_menu.id} found")
-                await interaction.message.delete()
-            else:
-                await interaction.respond(response_message, delete_after=15)
+        if interaction.message:
+            await interaction.message.delete()
+        else:
+            logging.warning(f"[FIND] Interaction message is None")
 
 class MyVibeButton(Button, VoiceExtension):
     def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *args, **kwargs):
@@ -143,14 +144,6 @@ class MyVibeButton(Button, VoiceExtension):
         gid = interaction.guild_id
         if not gid:
             logging.warning(f"[VIBE] Guild ID is None in button callback")
-            return
-
-        guild = await self.db.get_guild(gid)
-        channel = cast(discord.VoiceChannel, interaction.channel)
-
-        if len(channel.members) > 2 and not guild['always_allow_menu']:
-            logging.info(f"[VIBE] Button callback declined: other members are present in the voice channel")
-            await interaction.respond("❌ Вы не единственный в голосовом канале.", ephemeral=True)
             return
 
         track_type_map = {
@@ -178,7 +171,7 @@ class MyVibeButton(Button, VoiceExtension):
 
         next_track = await self.db.get_track(gid, 'next')
         if next_track:
-            await self._play_next_track(interaction, next_track)
+            await self._play_track(interaction, next_track)
 
 class ListenView(View):
     def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
@@ -217,3 +210,4 @@ class ListenView(View):
             return await super().on_timeout()
         except discord.NotFound:
             pass
+        self.stop()

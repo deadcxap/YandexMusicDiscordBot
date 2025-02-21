@@ -41,13 +41,13 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
 
     logging.debug(f"[GENERAL] Searching for '{ctx.value}' for user {uid}")
 
-    if content_type == 'Трек' and search.tracks:
+    if content_type == 'Трек' and search.tracks is not None:
         res = [f"{item.title} {f"({item.version})" if item.version else ''} - {", ".join(item.artists_name())}" for item in search.tracks.results]
-    elif content_type == 'Альбом' and search.albums:
+    elif content_type == 'Альбом' and search.albums is not None:
         res = [f"{item.title} - {", ".join(item.artists_name())}" for item in search.albums.results]
-    elif content_type == 'Артист' and search.artists:
+    elif content_type == 'Артист' and search.artists is not None:
         res = [f"{item.name}" for item in search.artists.results]
-    elif content_type == 'Плейлист' and search.playlists:
+    elif content_type == 'Плейлист' and search.playlists is not None:
         res = [f"{item.title}" for item in search.playlists.results]
     else:
         logging.warning(f"[GENERAL] Invalid content type '{content_type}' for user {uid}")
@@ -108,7 +108,7 @@ class General(Cog):
                 "Зарегистрируйте свой токен с помощью /login. Его можно получить [здесь](https://github.com/MarshalX/yandex-music-api/discussions/513).\n"
                 "Для получения помощи по конкретной команде, введите /help <команда>.\n"
                 "Для изменения настроек необходимо иметь права управления каналами на сервере.\n\n"
-                "**Для дополнительной помощи, присоединяйтесь к [серверу сообщества](https://discord.gg/gkmFDaPMeC).**"
+                "**Присоединяйтесь к нашему [серверу сообщества](https://discord.gg/TgnW8nfbFn)!**"
             )
             embed.add_field(
                 name='__Основные команды__',
@@ -117,7 +117,6 @@ class General(Cog):
                 `help`
                 `queue`
                 `settings`
-                `track`
                 `voice`"""
             )
             embed.set_footer(text='©️ Bananchiki')
@@ -149,30 +148,19 @@ class General(Cog):
             embed.description += (
                 "`Примечание`: Только пользователи с разрешением управления каналом могут менять настройки.\n\n"
                 "Получить текущие настройки.\n```/settings show```\n"
-                "Разрешить или запретить создание меню проигрывателя, когда в канале больше одного человека.\n```/settings menu```\n"
-                "Разрешить или запретить голосование.\n```/settings vote <тип>```\n"
-                "Разрешить или запретить отключение/подключение бота к каналу участникам без прав управления каналом.\n```/settings connect```\n"
-            )
-        elif command == 'track':
-            embed.description += (
-                "`Примечание`: Если вы один в голосовом канале или имеете разрешение управления каналом, голосование не начинается.\n\n"
-                "Переключиться на следующий трек в очереди. \n```/track next```\n"
-                "Приостановить текущий трек.\n```/track pause```\n"
-                "Возобновить текущий трек.\n```/track resume```\n"
-                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```\n"
-                "Добавить трек в плейлист «Мне нравится» или удалить его, если он уже там.\n```/track like```"
-                "Запустить Мою Волну по текущему треку.\n```/track vibe```"
+                "Переключить параметр настроек.\n```/settings toggle <параметр>```\n"
             )
         elif command == 'voice':
             embed.description += (
                 "`Примечание`: Доступность меню и Моей Волны зависит от настроек сервера.\n\n"
                 "Присоединить бота в голосовой канал.\n```/voice join```\n"
                 "Заставить бота покинуть голосовой канал.\n ```/voice leave```\n"
+                "Прервать проигрывание, удалить историю, очередь и текущий плеер.\n ```/track stop```\n"
                 "Создать меню проигрывателя. \n```/voice menu```\n"
                 "Запустить станцию. Без уточнения станции, запускает Мою Волну.\n```/voice vibe <название станции>```"
             )
         else:
-            await ctx.respond('❌ Неизвестная команда.')
+            await ctx.respond('❌ Неизвестная команда.', delete_after=15, ephemeral=True)
             return
 
         await ctx.respond(embed=embed, ephemeral=True)
@@ -236,6 +224,7 @@ class General(Cog):
             await ctx.respond('❌ У вас нет треков в плейлисте «Мне нравится».', delete_after=15, ephemeral=True)
             return
 
+        await ctx.defer()  # Sometimes it takes a while to fetch all tracks, so we defer the response
         real_tracks = await gather(*[track_short.fetch_track_async() for track_short in likes.tracks], return_exceptions=True)
         tracks = [track for track in real_tracks if not isinstance(track, BaseException)]  # Can't fetch user tracks
 
