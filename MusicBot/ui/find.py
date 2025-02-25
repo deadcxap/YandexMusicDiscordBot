@@ -171,7 +171,7 @@ class MyVibeButton(Button, VoiceExtension):
 
         next_track = await self.db.get_track(gid, 'next')
         if next_track:
-            await self._play_track(interaction, next_track)
+            await self.play_track(interaction, next_track)
 
 class ListenView(View):
     def __init__(self, item: Track | Album | Artist | Playlist | list[Track], *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):

@@ -296,14 +296,12 @@ class MyVibeButton(Button, VoiceExtension):
             )
 
         if not res:
-            logging.warning('[MENU] Failed to start the vibe')
-            await interaction.respond('❌ Не удалось запустить "Мою Волну". Попробуйте позже.', ephemeral=True)
+            logging.info('[MENU] Failed to start the vibe')
+            await interaction.respond('❌ Не удалось запустить "Мою Волну". Возможно, у вас нет подписки на Яндекс Музыку.', ephemeral=True)
 
         next_track = await self.db.get_track(interaction.guild_id, 'next')
         if next_track:
-            # Need to avoid additional feedback.
-            # TODO: Make it more elegant
-            await self._play_track(interaction, next_track, button_callback=True)
+            await self.play_track(interaction, next_track, button_callback=True)
 
 class MyVibeSelect(Select, VoiceExtension):
     def __init__(self, *args,  **kwargs):
@@ -583,10 +581,12 @@ class MenuView(View, VoiceExtension):
         if self.guild['current_menu']:
             await self.stop_playing(self.ctx)
             await self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
+
             message = await self.get_menu_message(self.ctx, self.guild['current_menu'])
             if message:
                 await message.delete()
                 logging.debug('[MENU] Successfully deleted menu message')
             else:
                 logging.debug('[MENU] No menu message found')
+
             self.stop()

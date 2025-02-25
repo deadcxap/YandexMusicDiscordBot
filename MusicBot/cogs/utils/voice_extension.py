@@ -12,7 +12,7 @@ from discord.ui import View
 from discord import Interaction, ApplicationContext, RawReactionActionEvent, VoiceChannel
 
 from MusicBot.cogs.utils import generate_item_embed
-from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase, ExplicitGuild, ExplicitUser, MessageVotes
+from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase, ExplicitGuild, MessageVotes
 
 menu_views: dict[int, View] = {}  # Store menu views and delete them when needed to prevent memory leaks for after callbacks.
 
@@ -24,11 +24,11 @@ class VoiceExtension:
         self.users_db = BaseUsersDatabase()
 
     async def send_menu_message(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, *, disable: bool = False) -> bool:
-        """Send menu message to the channel and delete old menu message if exists. Return True if sent.
+        """Send menu message to the channel and delete old one if exists. Return True if sent.
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            disable (bool, optional): Disable menu message. Defaults to False.
+            disable (bool, optional): Disable menu message buttons. Defaults to False.
 
         Raises:
             ValueError: If bot instance is not set and ctx is RawReactionActionEvent.
@@ -44,10 +44,11 @@ class VoiceExtension:
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'current_track': 1, 'current_menu': 1, 'vibing': 1})
 
-        if guild['current_track']:
-            if not (vc := await self.get_voice_client(ctx)):
-                return False
-
+        if not guild['current_track']:
+            embed = None
+        elif not (vc := await self.get_voice_client(ctx)):
+            return False
+        else:
             track = cast(Track, Track.de_json(
                 guild['current_track'],
                 client=YMClient()  # type: ignore
@@ -58,32 +59,29 @@ class VoiceExtension:
                 embed.set_footer(text='Приостановлено')
             else:
                 embed.remove_footer()
-        else:
-            embed = None
 
         if guild['current_menu']:
             logging.info(f"[VC_EXT] Deleting old menu message {guild['current_menu']} in guild {ctx.guild_id}")
-            message = await self.get_menu_message(ctx, guild['current_menu'])
-            if message:
+            if (message := await self.get_menu_message(ctx, guild['current_menu'])):
                 await message.delete()
 
         await self._update_menu_views_dict(ctx, disable=disable)
-        
+
         if isinstance(ctx, (ApplicationContext, Interaction)):
             interaction = await ctx.respond(view=menu_views[ctx.guild_id], embed=embed)
-        else:
-            if not self.bot:
-                raise ValueError("Bot instance is not set.")
-
-            channel = cast(VoiceChannel, self.bot.get_channel(ctx.channel_id))
-            if not channel:
-                logging.warning(f"[VC_EXT] Channel {ctx.channel_id} not found in guild {ctx.guild_id}")
-                return False
-
+        elif not self.bot:
+            raise ValueError("Bot instance is not set.")
+        elif not (channel := self.bot.get_channel(ctx.channel_id)):
+            logging.warning(f"[VC_EXT] Channel {ctx.channel_id} not found in guild {ctx.guild_id}")
+            return False
+        elif isinstance(channel, discord.VoiceChannel):
             interaction = await channel.send(
                 view=menu_views[ctx.guild_id],
                 embed=embed  # type: ignore  # Wrong typehints.
             )
+        else:
+            logging.warning(f"[VC_EXT] Channel {ctx.channel_id} is not a voice channel in guild {ctx.guild_id}")
+            return False
 
         response = await interaction.original_response() if isinstance(interaction, discord.Interaction) else interaction
         await self.db.update(ctx.guild_id, {'current_menu': response.id})
@@ -113,12 +111,10 @@ class VoiceExtension:
                 menu = await ctx.fetch_message(menu_mid)
             elif isinstance(ctx, Interaction):
                 menu = ctx.client.get_message(menu_mid)
-            elif isinstance(ctx, RawReactionActionEvent):
-                if not self.bot:
-                    raise ValueError("Bot instance is not set.")
-                menu = self.bot.get_message(menu_mid)
+            elif not self.bot:
+                raise ValueError("Bot instance is not set.")
             else:
-                raise ValueError(f"Invalid context type: '{type(ctx).__name__}'.")
+                menu = self.bot.get_message(menu_mid)
         except discord.DiscordException as e:
             logging.debug(f"[VC_EXT] Failed to get menu message: {e}")
             await self.db.update(ctx.guild_id, {'current_menu': None})
@@ -307,27 +303,23 @@ class VoiceExtension:
             )
 
         if not guild['vibing']:
-            feedback = await client.rotor_station_feedback_radio_started(
-                f"{type}:{id}",
-                f"desktop-user-{client.me.account.uid}",  # type: ignore  # That's made up, but it doesn't do much anyway.
-            )
+            try:
+                feedback = await client.rotor_station_feedback_radio_started(
+                    f"{type}:{id}",
+                    f"desktop-user-{client.me.account.uid}",  # type: ignore  # That's made up, but it doesn't do much anyway.
+                )
+            except yandex_music.exceptions.BadRequestError as e:
+                logging.info(f"[VIBE] Bad request error while starting radio: {e}")
+                return False
 
             if not feedback:
                 logging.warning(f"[VIBE] Failed to start radio '{type}:{id}'")
                 return False
-            logging.debug(f"[VIBE] Successfully started radio '{type}:{id}'")
 
-        if guild['current_track']:
-            logging.debug("[VIBE] Getting next vibe tracks")
-
-            # Current track here is either the track used to start vibe or the last vibe track played.
-            # So we always set the current track as the last track in the queue.
-            tracks = await client.rotor_station_tracks(
-                f"{type}:{id}",
-                queue=guild['current_track']['id']
-            )
-        else:
-            tracks = await client.rotor_station_tracks(f"{type}:{id}")
+        tracks = await client.rotor_station_tracks(
+            f"{type}:{id}",
+            queue=guild['current_track']['id'] if guild['current_track'] else None  # type: ignore
+        )
 
         if not tracks:
             logging.warning("[VIBE] Failed to get next vibe tracks")
@@ -430,91 +422,46 @@ class VoiceExtension:
     async def play_track(
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
-        track: Track,
+        track: Track | dict[str, Any],
         *,
+        client: YMClient | None = None,
         vc: discord.VoiceClient | None = None,
         menu_message: discord.Message | None = None,
         button_callback: bool = False,
-        retry: bool = False
     ) -> str | None:
-        """Download ``track`` by its id and play it in the voice channel. Return track title on success.
-        Send vibe feedback for playing track if vibing. Should be called when voice requirements are met.
+        """Play `track` in the voice channel. Avoids additional vibe feedback used in `next_track` and `previous_track`.
+        Forms ym_track and stops playback if needed. Returns track title on success.
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            track (Track): Track to play.
-            vc (discord.VoiceClient | None): Voice client.
-            menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
-            button_callback (bool): Should be True if the function is being called from button callback. Defaults to False.
-            retry (bool): Whether the function is called again.
+            track (dict[str, Any]): Track to play.
+            vc (discord.VoiceClient | None, optional): Voice client. Defaults to None.
+            menu_message (discord.Message | None, optional): Menu message to update. Defaults to None.
+            button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
 
         Returns:
             (str | None): Song title or None.
         """
-        gid = ctx.guild_id
-        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
-
-        if not gid or not uid:
-            logging.warning("Guild ID or User ID not found in context")
-            return None
-
-        guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'vibing': 1, 'current_track': 1})
-        vc = await self.get_voice_client(ctx) if not vc else vc
 
         if not vc:
+            vc = await self.get_voice_client(ctx)
+
+        if not await self.stop_playing(ctx, vc=vc):
             return None
 
-        try:
-            if not guild['current_track'] or track.id != guild['current_track']['id']:
-                await self._download_track(gid, track)
-        except yandex_music.exceptions.TimedOutError:
-            logging.warning(f"[VC_EXT] Timed out while downloading track '{track.title}'")
+        if isinstance(track, dict):
+            track = cast(Track, Track.de_json(
+                track,
+                client=await self.init_ym_client(ctx) if not client else client  # type: ignore  # Async client can be used here.
+            ))
 
-            if not isinstance(ctx, RawReactionActionEvent) and ctx.channel:
-                channel = cast(discord.VoiceChannel, ctx.channel)
-            elif self.bot and isinstance(ctx, RawReactionActionEvent):
-                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
-
-                if not retry:
-                    return await self.play_track(ctx, track, vc=vc, button_callback=button_callback, retry=True)
-
-                logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
-                await channel.send(f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
-            return None
-
-        async with aiofiles.open(f'music/{gid}.mp3', "rb") as f:
-            track_bytes = io.BytesIO(await f.read())
-            song = discord.FFmpegPCMAudio(track_bytes, pipe=True, options='-vn -b:a 64k -filter:a "volume=0.15"')
-
-        await self.db.set_current_track(gid, track)
-
-        if menu_message or guild['current_menu']:
-            # Updating menu message before playing to prevent delay and avoid FFMPEG lags.
-            await self.update_menu_full(ctx, menu_message=menu_message, button_callback=button_callback)
-
-        if not guild['vibing']:
-            # Giving FFMPEG enough time to process the audio file
-            await asyncio.sleep(1)
-
-        loop = self._get_current_event_loop(ctx)
-        try:
-            vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx, after=True), loop))
-        except discord.errors.ClientException as e:
-            logging.error(f"[VC_EXT] Error while playing track '{track.title}': {e}")
-            if not isinstance(ctx, RawReactionActionEvent):
-                await ctx.respond(f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15, ephemeral=True)
-            elif self.bot:
-                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
-                await channel.send(f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15)
-            return None
-
-        logging.info(f"[VC_EXT] Playing track '{track.title}'")
-        await self.db.update(gid, {'is_stopped': False})
-
-        if guild['vibing']:
-            await self._my_vibe_start_feedback(ctx, track, uid)
-
-        return track.title
+        return await self._play_track(
+            ctx,
+            track,
+            vc=vc,
+            menu_message=menu_message,
+            button_callback=button_callback
+        )
 
     async def stop_playing(
         self,
@@ -523,12 +470,13 @@ class VoiceExtension:
         vc: discord.VoiceClient | None = None,
         full: bool = False
     ) -> bool:
-        """Stop playing music in the voice channel. Required to play next one. Returns True on success.
+        """Stop playing music in the voice channel and send vibe feedback.
+        Required to play next track. Returns True on success.
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             vc (discord.VoiceClient | None, optional): Voice client. Defaults to None.
-            full (bool, optional): Full check includes menu deletion and vibe feedback. Defaults to False.
+            full (bool, optional): Full check includes menu deletion. Defaults to False.
         
         Returns:
             bool: Whether the playback was stopped.
@@ -543,7 +491,6 @@ class VoiceExtension:
             return False
 
         guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'current_track': 1, 'vibing': 1})
-        user = await self.users_db.get_user(uid, projection={'vibe_type': 1, 'vibe_id': 1, 'vibe_batch_id': 1, 'ym_token': 1})
         vc = await self.get_voice_client(ctx) if not vc else vc
 
         if not vc:
@@ -553,12 +500,13 @@ class VoiceExtension:
         vc.stop()
 
         if full:
-            if not await self._full_stop(ctx, guild, gid):
-                return False
-
             if guild['vibing'] and guild['current_track']:
-                if not await self._my_vibe_stop_feedback(ctx, guild, user):
-                    return False
+                await self.send_vibe_feedback(ctx, 'trackFinished', guild['current_track'])
+
+            if not guild['current_menu']:
+                return True
+
+            return await self._full_stop(ctx, guild['current_menu'], gid)
 
         return True
 
@@ -579,7 +527,7 @@ class VoiceExtension:
             vc (discord.VoiceClient, optional): Voice client.
             after (bool, optional): Whether the function is being called by the after callback. Defaults to False.
             menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
-            button_interaction (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
+            button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
 
         Returns:
             (str | None): Track title or None.
@@ -595,17 +543,15 @@ class VoiceExtension:
 
         guild = await self.db.get_guild(gid, projection={'shuffle': 1, 'repeat': 1, 'is_stopped': 1, 'current_menu': 1, 'vibing': 1, 'current_track': 1})
         user = await self.users_db.get_user(uid)
-        client = await self.init_ym_client(ctx, user['ym_token'])
-        vc = await self.get_voice_client(ctx) if not vc else vc
 
         if guild['is_stopped'] and after:
-            logging.debug("[VC_EXT] Playback is stopped, skipping after callback...")
+            logging.debug("[VC_EXT] Playback is stopped, skipping after callback.")
             return None
 
-        if not client:
+        if not (client := await self.init_ym_client(ctx, user['ym_token'])):
             return None
 
-        if not vc:  # Silently return if bot got kicked
+        if not (vc := await self.get_voice_client(ctx) if not vc else vc):
             logging.debug("[VC_EXT] Voice client not found in 'next_track'")
             return None
 
@@ -617,14 +563,12 @@ class VoiceExtension:
             await self.update_menu_view(ctx, menu_message=menu_message, disable=True)
 
         if guild['vibing'] and guild['current_track']:
-            if not await self._my_vibe_feedback(ctx, guild, user, client, after=after):
+            if not await self.send_vibe_feedback(ctx, 'trackFinished' if after else 'skip', guild['current_track']):
                 if not isinstance(ctx, RawReactionActionEvent):
-                    await ctx.respond("❌ Что-то пошло не так. Попробуйте снова.", ephemeral=True)
+                    await ctx.respond("❌ Не удалось отправить отчёт об оконачнии Моей Волны.", ephemeral=True, delete_after=15)
                 elif self.bot:
                     channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
-                    await channel.send("❌ Что-то пошло не так. Попробуйте снова.", delete_after=15)
-
-                return None
+                    await channel.send("❌ Не удалось отправить отчёт об оконачнии Моей Волны.", delete_after=15)
 
         if guild['repeat'] and after:
             logging.debug("[VC_EXT] Repeating current track")
@@ -635,7 +579,7 @@ class VoiceExtension:
         else:
             logging.debug("[VC_EXT] Getting next track from queue")
             next_track = await self.db.get_track(gid, 'next')
-        
+
         if not next_track and guild['vibing']:
             logging.debug("[VC_EXT] No next track found, generating new vibe")
             if not user['vibe_type'] or not user['vibe_id']:
@@ -646,7 +590,7 @@ class VoiceExtension:
             next_track = await self.db.get_track(gid, 'next')
 
         if next_track:
-            title = await self._play_track(ctx, next_track, client=client, vc=vc, button_callback=button_callback)
+            title = await self.play_track(ctx, next_track, client=client, vc=vc, button_callback=button_callback)
 
             if after and not guild['current_menu']:
                 if isinstance(ctx, discord.RawReactionActionEvent):
@@ -668,7 +612,7 @@ class VoiceExtension:
 
     async def previous_track(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, button_callback: bool = False) -> str | None:
         """Switch to the previous track in the queue. Repeat current track if no previous one found.
-        Return track title on success.
+        Return track title on success. Should be called only if there's already track playing.
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
@@ -700,7 +644,7 @@ class VoiceExtension:
             track = None
 
         if track:
-            return await self._play_track(ctx, track, button_callback=button_callback)
+            return await self.play_track(ctx, track, button_callback=button_callback)
 
         return None
 
@@ -713,17 +657,15 @@ class VoiceExtension:
         Returns:
             (list[Track] | None): List of tracks or None.
         """
-        gid = ctx.guild_id
-        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        logging.info("[VC_EXT] Getting liked tracks")
 
-        if not gid or not uid:
-            logging.warning("Guild ID or User ID not found in context inside 'play_track'")
+        if not ctx.guild_id:
+            logging.warning("Guild ID not found in context inside 'get_likes'")
             return None
 
-        current_track = await self.db.get_track(gid, 'current')
-        client = await self.init_ym_client(ctx, await self.users_db.get_ym_token(uid))
+        client = await self.init_ym_client(ctx)
 
-        if not current_track:
+        if not await self.db.get_track(ctx.guild_id, 'current'):
             logging.debug("[VC_EXT] Current track not found in 'get_likes'")
             return None
 
@@ -732,7 +674,7 @@ class VoiceExtension:
 
         likes = await client.users_likes_tracks()
         if not likes:
-            logging.debug("[VC_EXT] No likes found")
+            logging.info("[VC_EXT] No likes found")
             return None
 
         return likes.tracks
@@ -797,7 +739,8 @@ class VoiceExtension:
         Returns:
             (YMClient | None): Client or None.
         """
-        
+        logging.debug("[VC_EXT] Initializing Yandex Music client")
+
         if not token:
             uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
             token = await self.users_db.get_ym_token(uid) if uid else None
@@ -807,19 +750,22 @@ class VoiceExtension:
             if not isinstance(ctx, discord.RawReactionActionEvent):
                 await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return None
-        
+
         if not hasattr(self, '_ym_clients'):
-            self._ym_clients = {}
+            self._ym_clients: dict[str, YMClient] = {}
 
         if token in self._ym_clients:
-            return self._ym_clients[token]
-        
+            client = self._ym_clients[token]
+            try:
+                await client.account_status()
+                return client
+            except yandex_music.exceptions.UnauthorizedError:
+                del self._ym_clients[token]
+                return None
         try:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
             logging.debug("UnauthorizedError in 'init_ym_client'")
-            if not isinstance(ctx, discord.RawReactionActionEvent):
-                await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
             return None
 
         self._ym_clients[token] = client
@@ -843,8 +789,8 @@ class VoiceExtension:
             logging.warning("[VOICE] Guild not found")
             return False
 
-        if not guild['current_menu']:
-            await self.send_menu_message(ctx)
+        if not guild['current_menu'] and not await self.send_menu_message(ctx):
+            await channel.send(content=f"❌ Не удалось отправить меню! Попробуйте ещё раз.", delete_after=15)
 
         if vote_data['action'] in ('next', 'previous'):
             if not guild.get(f'{vote_data['action']}_tracks'):
@@ -916,29 +862,86 @@ class VoiceExtension:
                 await channel.send("❌ Произошла ошибка при обновлении станции.", delete_after=15)
                 return False
 
-            feedback = await self.update_vibe(ctx, _type, _id, viber_id=viber_id)
-
-            if not feedback:
+            if not await self.update_vibe(ctx, _type, _id, viber_id=viber_id):
                 await channel.send("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15)
                 return False
 
             next_track = await self.db.get_track(ctx.guild_id, 'next')
             if next_track:
-                await self._play_track(ctx, next_track)
+                await self.play_track(ctx, next_track)
+            else:
+                await channel.send("❌ Не удалось воспроизвести трек.", delete_after=15)
+                return False
 
         else:
             logging.error(f"[VOICE] Unknown action '{vote_data['action']}' for message {ctx.message_id}")
             return False
 
         return True
-    
+
+    async def send_vibe_feedback(
+        self,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
+        feedback_type: Literal['radioStarted', 'trackStarted', 'trackFinished', 'skip'],
+        track: Track | dict[str, Any]
+    ) -> bool:
+        """Send vibe feedback to Yandex Music. Return True on success.
+
+        Args:
+            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
+            feedback_type (str): Type of feedback. Can be 'radioStarted', 'trackStarted', 'trackFinished', 'skip'.
+            track (Track | dict[str, Any]): Track data.
+
+        Returns:
+            bool: True on success, False otherwise.
+        """
+        logging.debug(f"[VC_EXT] Sending vibe feedback, type: {feedback_type}")
+
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+
+        if not uid:
+            logging.warning("[VC_EXT] User id not found")
+            return False
+
+        user = await self.users_db.get_user(uid, projection={'ym_token': 1, 'vibe_batch_id': 1, 'vibe_type': 1, 'vibe_id': 1})
+
+        if not user['ym_token']:
+            logging.warning(f"[VC_EXT] No YM token for user {user['_id']}.")
+            return False
+
+        client = await self.init_ym_client(ctx, user['ym_token'])
+        if not client:
+            logging.info(f"[VC_EXT] Failed to init YM client for user {user['_id']}")
+            if not isinstance(ctx, RawReactionActionEvent):
+                await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
+            elif self.bot:
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                await channel.send("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15)
+            return False
+
+        total_play_seconds = track['duration_ms'] // 1000 if feedback_type not in ('radioStarted', 'trackStarted') and track['duration_ms'] else None
+        try:
+            feedback = await client.rotor_station_feedback(
+                f'{user['vibe_type']}:{user['vibe_id']}',
+                feedback_type,
+                track_id=track['id'],
+                total_played_seconds=total_play_seconds,  # type: ignore
+                batch_id=user['vibe_batch_id']  # type: ignore
+            )
+        except yandex_music.exceptions.BadRequestError as e:
+            logging.error(f"[VC_EXT] Failed to send vibe feedback, type: {feedback_type}, track: {track['title']} error: {e}")
+            return False
+
+        logging.info(f"[VC_EXT] Sent vibe feedback type '{feedback_type}' with result: {feedback}")
+        return feedback
+
     async def _update_menu_views_dict(
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
         *,
         disable: bool = False
     ) -> None:
-        """Update menu views in `menu_views` dict. This prevents creating multiple menu views for the same guild.
+        """Genereate a new menu view and update the `menu_views` dict. This prevents creating multiple menu views for the same guild.
         Use guild id as a key to access menu view.
 
         Args:
@@ -968,10 +971,10 @@ class VoiceExtension:
         try:
             await track.download_async(f'music/{gid}.mp3')
         except yandex_music.exceptions.TimedOutError:
-            logging.warning(f"[VC_EXT] Timeout downloading {track.title}")
+            logging.warning(f"[VC_EXT] Timed out while downloading track '{track.title}'")
             raise
     
-    async def _full_stop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, guild: ExplicitGuild, gid: int) -> Literal[True]:
+    async def _full_stop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, current_menu: int, gid: int) -> Literal[True]:
         """Stop all actions and delete menu. Return True on success.
 
         Args:
@@ -986,195 +989,106 @@ class VoiceExtension:
         if gid in menu_views:
             menu_views[gid].stop()
             del menu_views[gid]
-        
-        if guild['current_menu']:
-            menu = await self.get_menu_message(ctx, guild['current_menu'])
-            if menu:
-                await menu.delete()
+
+        if (menu := await self.get_menu_message(ctx, current_menu)):
+            await menu.delete()
 
         await self.db.update(gid, {
             'current_menu': None, 'repeat': False, 'shuffle': False, 'previous_tracks': [], 'next_tracks': [], 'votes': {}, 'vibing': False
         })
         return True
-    
-    async def _my_vibe_start_feedback(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, track: Track, uid: int):
-        """Send vibe start feedback to Yandex Music. Return True on success.
-
-        Args:
-            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            track (Track): Track.
-            uid (int): User ID.
         
-        Returns:
-            bool: True on success, False otherwise.
-        """
-        user = await self.users_db.get_user(uid)
-        client = await self.init_ym_client(ctx, user['ym_token']) if not track.client else track.client
-        
-        if not client:
-            logging.warning(f"[VOICE] No YM client for user {uid}.")
-            return False
-
-        feedback = await client.rotor_station_feedback_track_started(
-            f"{user['vibe_type']}:{user['vibe_id']}",
-            track.id,
-            user['vibe_batch_id']  # type: ignore  # Wrong typehints
-        )
-        logging.debug(f"[VIBE] Track started feedback: {feedback}")
-        return True
-    
-    async def _my_vibe_stop_feedback(
-        self,
-        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
-        guild: ExplicitGuild,
-        user: ExplicitUser
-    ) -> bool:
-        """Send vibe stop feedback to Yandex Music. Return True on success.
-        
-        Args:
-            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            guild (ExplicitGuild): Guild.
-            user (ExplicitUser): User.
-        
-        Returns:
-            bool: True on success, False otherwise.
-        """
-        logging.debug("[VC_EXT] Sending vibe stop feedback")
-
-        if not user['ym_token']:
-            logging.warning(f"[VOICE] No YM token for user {user['_id']}.")
-            return False
-
-        client = await self.init_ym_client(ctx, user['ym_token'])
-        if not client:
-            logging.info(f"[VOICE] Failed to init YM client for user {user['_id']}")
-            if not isinstance(ctx, RawReactionActionEvent):
-                await ctx.respond("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
-            elif self.bot:
-                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
-                await channel.send("❌ Что-то пошло не так. Попробуйте позже.", delete_after=15)
-            return False
-
-        track = guild['current_track']
-        if not track:
-            logging.info(f"[VOICE] No current track in guild {guild['_id']}")
-            return False
-
-        res = await client.rotor_station_feedback_track_finished(
-            f"{user['vibe_type']}:{user['vibe_id']}",
-            track['id'],
-            track['duration_ms'] // 1000,
-            user['vibe_batch_id']  # type: ignore  # Wrong typehints
-        )
-        logging.info(f"[VOICE] User {user['_id']} finished vibing with result: {res}")
-        return True
-
-    async def _my_vibe_feedback(
-        self,
-        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
-        guild: ExplicitGuild,
-        user: ExplicitUser,
-        client: YMClient,
-        *,
-        after: bool
-    ) -> bool:
-        """Send vibe feedback to Yandex Music. If the track was skipped, call `update_vibe` to get next tracks.
-        This is called when a user skips a track or when a track finishes and not when a user stops the player.
-
-        Args:
-            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            guild (ExplicitGuild): Guild.
-            user (ExplicitUser): User.
-            client (YMClient): Yandex Music client.
-            after (bool): Whether the track finished or was skipped. If True, the track finished.
-
-        Returns:
-            bool: True on success, False otherwise.
-        """
-        # TODO: Should be refactored to prevent duplication with `_my_vibe_stop_feedback` and `_my_vibe_start_feedback`
-        logging.debug(f"[VC_EXT] Sending vibe feedback, after: {after}")
-
-        if not user['vibe_type'] or not user['vibe_id']:
-            logging.warning("[VIBE] No vibe type or id found")
-            return False
-
-        if not guild['current_track']:
-            logging.warning("[VIBE] No current track found")
-            return False
-
-        if after:
-            feedback = await client.rotor_station_feedback_track_finished(
-                f'{user['vibe_type']}:{user['vibe_id']}',
-                guild['current_track']['id'],
-                guild['current_track']['duration_ms'] // 1000,
-                user['vibe_batch_id']  # type: ignore  # Wrong typehints
-            )
-            logging.debug(f"[VIBE] Finished track feeedback: {feedback}")
-        else:
-            feedback = await client.rotor_station_feedback_skip(
-                f'{user['vibe_type']}:{user['vibe_id']}',
-                guild['current_track']['id'],
-                guild['current_track']['duration_ms'] // 1000,
-                user['vibe_batch_id']  # type: ignore  # Wrong typehints
-            )
-            if not feedback:
-                logging.warning("[VIBE] Failed to send vibe feedback")
-                return False
-
-            logging.debug(f"[VIBE] Skipped track feeedback: {feedback}")
-            feedback = await self.update_vibe(
-                ctx,
-                user['vibe_type'],
-                user['vibe_id']
-            )
-
-        return feedback
-
     async def _play_track(
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
-        track: dict[str, Any],
+        track: Track,
         *,
-        client: YMClient | None = None,
         vc: discord.VoiceClient | None = None,
         menu_message: discord.Message | None = None,
         button_callback: bool = False,
+        retry: bool = False
     ) -> str | None:
-        """Play `track` in the voice channel. Avoids additional vibe checks used in `next_track` and `previous_track`.
+        """Download ``track`` by its id and play it in the voice channel. Return track title on success.
+        Send vibe feedback for playing track if vibing. Should be called when voice requirements are met.
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            track (dict[str, Any]): Track to play.
-            vc (discord.VoiceClient | None, optional): Voice client. Defaults to None.
-            menu_message (discord.Message | None, optional): Menu message to update. Defaults to None.
-            button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
+            track (Track): Track to play.
+            vc (discord.VoiceClient | None): Voice client.
+            menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
+            button_callback (bool): Should be True if the function is being called from button callback. Defaults to False.
+            retry (bool): Whether the function is called again.
 
         Returns:
-            str | None: Song title or None.
+            (str | None): Song title or None.
         """
-        # TODO: This should be refactored to avoid code duplication with `next_track` and `previous_track`.
-        client = await self.init_ym_client(ctx) if not client else client
+        gid = ctx.guild_id
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
 
-        if not client:
+        if not gid or not uid:
+            logging.warning("Guild ID or User ID not found in context")
             return None
 
-        if not vc:
-            vc = await self.get_voice_client(ctx)
+        guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'vibing': 1, 'current_track': 1})
 
-        if not await self.stop_playing(ctx, vc=vc):
+        if not (vc := await self.get_voice_client(ctx) if not vc else vc):
             return None
 
-        ym_track = cast(Track, Track.de_json(
-            track,
-            client=client  # type: ignore  # Async client can be used here.
-        ))
-        return await self.play_track(
-            ctx,
-            ym_track,
-            vc=vc,
-            menu_message=menu_message,
-            button_callback=button_callback
-        )
+        try:
+            if not guild['current_track'] or track.id != guild['current_track']['id']:
+                await self._download_track(gid, track)
+        except yandex_music.exceptions.TimedOutError:
+            if not isinstance(ctx, RawReactionActionEvent) and ctx.channel:
+                channel = cast(discord.VoiceChannel, ctx.channel)
+            elif not retry:
+                return await self._play_track(ctx, track, vc=vc, menu_message=menu_message, button_callback=button_callback, retry=True)
+            elif self.bot and isinstance(ctx, RawReactionActionEvent):
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
+                await channel.send(f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
+            return None
+
+        async with aiofiles.open(f'music/{gid}.mp3', "rb") as f:
+            track_bytes = io.BytesIO(await f.read())
+            song = discord.FFmpegPCMAudio(track_bytes, pipe=True, options='-vn -b:a 64k -filter:a "volume=0.15"')
+
+        await self.db.set_current_track(gid, track)
+
+        if menu_message or guild['current_menu']:
+            # Updating menu message before playing to prevent delay and avoid FFMPEG lags.
+            await self.update_menu_full(ctx, menu_message=menu_message, button_callback=button_callback)
+
+        if not guild['vibing']:
+            # Giving FFMPEG enough time to process the audio file
+            await asyncio.sleep(1)
+
+        loop = self._get_current_event_loop(ctx)
+        try:
+            vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.next_track(ctx, after=True), loop))
+        except discord.errors.ClientException as e:
+            logging.error(f"[VC_EXT] Error while playing track '{track.title}': {e}")
+            if not isinstance(ctx, RawReactionActionEvent):
+                await ctx.respond(f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15, ephemeral=True)
+            elif self.bot:
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                await channel.send(f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15)
+            return None
+        except yandex_music.exceptions.InvalidBitrateError:
+            logging.error(f"[VC_EXT] Invalid bitrate while playing track '{track.title}'")
+            if not isinstance(ctx, RawReactionActionEvent):
+                await ctx.respond(f"❌ У трека отсутствует необходимый битрейт. Его проигрывание невозможно.", delete_after=15, ephemeral=True)
+            elif self.bot:
+                channel = cast(discord.VoiceChannel, self.bot.get_channel(ctx.channel_id))
+                await channel.send(f"❌ У трека отсутствует необходимый битрейт. Его проигрывание невозможно.", delete_after=15)
+            return None
+
+        logging.info(f"[VC_EXT] Playing track '{track.title}'")
+        await self.db.update(gid, {'is_stopped': False})
+
+        if guild['vibing']:
+            await self.send_vibe_feedback(ctx, 'trackStarted', track)
+
+        return track.title
 
     def _get_current_event_loop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> asyncio.AbstractEventLoop:
         """Get the current event loop. If the context is a RawReactionActionEvent, get the loop from the self.bot instance.
