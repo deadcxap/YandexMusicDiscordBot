@@ -19,11 +19,11 @@ class PlayButton(Button, VoiceExtension):
         logging.debug(f"[FIND] Callback triggered for type: '{type(self.item).__name__}'")
 
         if not interaction.guild:
-            logging.warning("[FIND] No guild found in PlayButton callback")
+            logging.info("[FIND] No guild found in PlayButton callback")
+            await interaction.respond("❌ Эта команда доступна только на серверах.", ephemeral=True, delete_after=15)
             return
         
         if not await self.voice_check(interaction):
-            logging.debug("[FIND] Voice check failed in PlayButton callback")
             return
 
         gid = interaction.guild.id
@@ -41,7 +41,7 @@ class PlayButton(Button, VoiceExtension):
             album = await self.item.with_tracks_async()
             if not album or not album.volumes:
                 logging.debug("[FIND] Failed to fetch album tracks in PlayButton callback")
-                await interaction.respond("❌ Не удалось получить треки альбома.", ephemeral=True)
+                await interaction.respond("❌ Не удалось получить треки альбома.", ephemeral=True, delete_after=15)
                 return
 
             tracks = [track for volume in album.volumes for track in volume]
@@ -53,7 +53,7 @@ class PlayButton(Button, VoiceExtension):
             artist_tracks = await self.item.get_tracks_async()
             if not artist_tracks:
                 logging.debug("[FIND] Failed to fetch artist tracks in PlayButton callback")
-                await interaction.respond("❌ Не удалось получить треки артиста.", ephemeral=True)
+                await interaction.respond("❌ Не удалось получить треки артиста.", ephemeral=True, delete_after=15)
                 return
 
             tracks = artist_tracks.tracks.copy()
@@ -65,7 +65,7 @@ class PlayButton(Button, VoiceExtension):
             short_tracks = await self.item.fetch_tracks_async()
             if not short_tracks:
                 logging.debug("[FIND] Failed to fetch playlist tracks in PlayButton callback")
-                await interaction.respond("❌ Не удалось получить треки из плейлиста.", delete_after=15)
+                await interaction.respond("❌ Не удалось получить треки из плейлиста.", ephemeral=True, delete_after=15)
                 return
 
             tracks = [cast(Track, short_track.track) for short_track in short_tracks]
@@ -77,7 +77,7 @@ class PlayButton(Button, VoiceExtension):
             tracks = self.item.copy()
             if not tracks:
                 logging.debug("[FIND] Empty tracks list in PlayButton callback")
-                await interaction.respond("❌ Не удалось получить треки.", delete_after=15)
+                await interaction.respond("❌ Не удалось получить треки.", ephemeral=True, delete_after=15)
                 return
 
             action = 'add_playlist'
@@ -109,21 +109,20 @@ class PlayButton(Button, VoiceExtension):
             )
             return
 
-        logging.debug(f"[FIND] Skipping vote for '{action}'")
-
         if guild['current_menu']:
             await interaction.respond(response_message, delete_after=15)
-        else:
-            await self.send_menu_message(interaction, disable=True)
+        elif not await self.send_menu_message(interaction, disable=True):
+            await interaction.respond('❌ Не удалось отправить сообщение.', ephemeral=True, delete_after=15)
 
-        if guild['current_track'] is not None:
+        if guild['current_track']:
             logging.debug(f"[FIND] Adding tracks to queue")
             await self.db.modify_track(gid, tracks, 'next', 'extend')
         else:
             logging.debug(f"[FIND] Playing track")
             track = tracks.pop(0)
             await self.db.modify_track(gid, tracks, 'next', 'extend')
-            await self.play_track(interaction, track)
+            if not await self.play_track(interaction, track):
+                await interaction.respond('❌ Не удалось воспроизвести трек.', ephemeral=True, delete_after=15)
 
         if interaction.message:
             await interaction.message.delete()
@@ -146,6 +145,7 @@ class MyVibeButton(Button, VoiceExtension):
             logging.warning(f"[VIBE] Guild ID is None in button callback")
             return
 
+
         track_type_map = {
             Track: 'track', Album: 'album', Artist: 'artist', Playlist: 'playlist', list: 'user'
         }
@@ -153,7 +153,7 @@ class MyVibeButton(Button, VoiceExtension):
         if isinstance(self.item, Playlist):
             if not self.item.owner:
                 logging.warning(f"[VIBE] Playlist owner is None")
-                await interaction.respond("❌ Не удалось получить информацию о плейлисте.", ephemeral=True)
+                await interaction.respond("❌ Не удалось получить информацию о плейлисте. Отсутствует владелец.", ephemeral=True, delete_after=15)
                 return
 
             _id = self.item.owner.login + '_' + str(self.item.kind)
@@ -162,12 +162,11 @@ class MyVibeButton(Button, VoiceExtension):
         else:
             _id = 'onyourwave'
 
-        await self.send_menu_message(interaction, disable=True)
-        await self.update_vibe(
-            interaction,
-            track_type_map[type(self.item)],
-            _id
-        )
+        guild = await self.db.get_guild(gid, projection={'current_menu': 1})
+        if not guild['current_menu'] and not await self.send_menu_message(interaction, disable=True):
+            await interaction.respond('❌ Не удалось отправить сообщение.', ephemeral=True, delete_after=15)
+        
+        await self.update_vibe(interaction, track_type_map[type(self.item)], _id)
 
         next_track = await self.db.get_track(gid, 'next')
         if next_track:
@@ -208,6 +207,6 @@ class ListenView(View):
     async def on_timeout(self) -> None:
         try:
             return await super().on_timeout()
-        except discord.NotFound:
+        except discord.HTTPException:
             pass
         self.stop()

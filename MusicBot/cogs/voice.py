@@ -204,8 +204,8 @@ class Voice(Cog, VoiceExtension):
     @voice.command(name="menu", description="Создать или обновить меню проигрывателя.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Menu command invoked by user {ctx.author.id} in guild {ctx.guild.id}")
-        if await self.voice_check(ctx):
-            await self.send_menu_message(ctx)
+        if await self.voice_check(ctx) and not await self.send_menu_message(ctx):
+            await ctx.respond("❌ Не удалось создать меню.", ephemeral=True)
 
     @voice.command(name="join", description="Подключиться к голосовому каналу, в котором вы сейчас находитесь.")
     async def join(self, ctx: discord.ApplicationContext) -> None:
@@ -213,17 +213,17 @@ class Voice(Cog, VoiceExtension):
 
         member = cast(discord.Member, ctx.author)
         guild = await self.db.get_guild(ctx.guild.id, projection={'allow_change_connect': 1})
-        vc = await self.get_voice_client(ctx)
 
+        await ctx.defer(ephemeral=True)
         if not member.guild_permissions.manage_channels and not guild['allow_change_connect']:
             response_message = "❌ У вас нет прав для выполнения этой команды."
-        elif vc and vc.is_connected():
-            response_message = "❌ Бот уже находится в голосовом канале. Выключите его с помощью команды /voice leave."
         elif isinstance(ctx.channel, discord.VoiceChannel):
             try:
                 await ctx.channel.connect()
             except TimeoutError:
                 response_message = "❌ Не удалось подключиться к голосовому каналу."
+            except discord.ClientException:
+                response_message = "❌ Бот уже находится в голосовом канале. Выключите его с помощью команды /voice leave."
             else:
                 response_message = "✅ Подключение успешно!"
         else:
@@ -302,6 +302,10 @@ class Voice(Cog, VoiceExtension):
         await self.users_db.update(ctx.user.id, {'queue_page': 0})
 
         tracks = await self.db.get_tracks_list(ctx.guild.id, 'next')
+        if len(tracks) == 0:
+            await ctx.respond("❌ Очередь пуста.", ephemeral=True)
+            return
+
         embed = generate_queue_embed(0, tracks)
         await ctx.respond(embed=embed, view=await QueueView(ctx).init(), ephemeral=True)
 
@@ -340,6 +344,7 @@ class Voice(Cog, VoiceExtension):
             )
             return
 
+        await ctx.defer(ephemeral=True)
         res = await self.stop_playing(ctx, full=True)
         if res:
             await ctx.respond("✅ Воспроизведение остановлено.", delete_after=15, ephemeral=True)
@@ -435,18 +440,16 @@ class Voice(Cog, VoiceExtension):
                 }
             )
             return
-        
-        feedback = await self.update_vibe(ctx, _type, _id)
 
-        if not feedback:
+        if not await self.update_vibe(ctx, _type, _id):
             await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15, ephemeral=True)
             return
 
         if guild['current_menu']:
             await ctx.respond("✅ Моя Волна включена.", delete_after=15, ephemeral=True)
-        else:
-            await self.send_menu_message(ctx, disable=True)
+        elif not await self.send_menu_message(ctx, disable=True):
+            await ctx.respond("❌ Не удалось отправить меню. Попробуйте позже.", delete_after=15, ephemeral=True)
 
         next_track = await self.db.get_track(ctx.guild_id, 'next')
         if next_track:
-            await self._play_track(ctx, next_track)
+            await self.play_track(ctx, next_track)

@@ -2,7 +2,7 @@ import logging
 from typing import Self, cast
 
 from discord.ui import View, Button, Item, Select
-from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed, ComponentType, SelectOption, Member
+from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed, ComponentType, SelectOption, Member, HTTPException
 
 import yandex_music.exceptions
 from yandex_music import TrackLyrics, Playlist, ClientAsync as YMClient
@@ -348,7 +348,7 @@ class MyVibeSelect(Select, VoiceExtension):
         await interaction.edit(view=view)
 
 class MyVibeSettingsView(View, VoiceExtension):
-    def __init__(self, interaction: Interaction, *items: Item, timeout: float | None = None, disable_on_timeout: bool = True):
+    def __init__(self, interaction: Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
         self.interaction = interaction
@@ -410,6 +410,13 @@ class MyVibeSettingsView(View, VoiceExtension):
             self.add_item(select)
 
         return self
+    
+    async def on_timeout(self) -> None:
+        try:
+            return await super().on_timeout()
+        except HTTPException:
+            pass
+        self.stop()
 
 class MyVibeSettingsButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -530,7 +537,7 @@ class MenuView(View, VoiceExtension):
         if not self.ctx.guild_id:
             return self
 
-        self.guild = await self.db.get_guild(self.ctx.guild_id)
+        self.guild = await self.db.get_guild(self.ctx.guild_id, projection={'repeat': 1, 'shuffle': 1, 'current_track': 1, 'vibing': 1})
     
         if self.guild['repeat']:
             self.repeat_button.style = ButtonStyle.success

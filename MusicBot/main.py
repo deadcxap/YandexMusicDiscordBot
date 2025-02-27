@@ -5,7 +5,6 @@ import discord
 from discord.ext.commands import Bot
 
 intents = discord.Intents.default()
-intents.message_content = True
 bot = Bot(intents=intents)
 
 cogs_list = [

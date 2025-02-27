@@ -2,7 +2,7 @@ from math import ceil
 from typing import Self, Any
 
 from discord.ui import View, Button, Item
-from discord import ApplicationContext, ButtonStyle, Interaction, Embed
+from discord import ApplicationContext, ButtonStyle, Interaction, Embed, HTTPException
 
 from MusicBot.cogs.utils.voice_extension import VoiceExtension
 
@@ -27,10 +27,11 @@ class QueueNextButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
         VoiceExtension.__init__(self, None)
-    
+
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user or not interaction.guild:
             return
+
         user = await self.users_db.get_user(interaction.user.id)
         page = user['queue_page'] + 1
         await self.users_db.update(interaction.user.id, {'queue_page': page})
@@ -42,10 +43,11 @@ class QueuePrevButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
         Button.__init__(self, **kwargs)
         VoiceExtension.__init__(self, None)
-    
+
     async def callback(self, interaction: Interaction) -> None:
         if not interaction.user or not interaction.guild:
             return
+
         user = await self.users_db.get_user(interaction.user.id)
         page = user['queue_page'] - 1
         await self.users_db.update(interaction.user.id, {'queue_page': page})
@@ -54,30 +56,36 @@ class QueuePrevButton(Button, VoiceExtension):
         await interaction.edit(embed=embed, view=await QueueView(interaction).init())
 
 class QueueView(View, VoiceExtension):
-    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = True):
+    def __init__(self, ctx: ApplicationContext | Interaction, *items: Item, timeout: float | None = 360, disable_on_timeout: bool = False):
         View.__init__(self, *items, timeout=timeout, disable_on_timeout=disable_on_timeout)
         VoiceExtension.__init__(self, None)
 
         self.ctx = ctx
         self.next_button = QueueNextButton(style=ButtonStyle.primary, emoji='▶️')
         self.prev_button = QueuePrevButton(style=ButtonStyle.primary, emoji='◀️')
-    
+
     async def init(self) -> Self:
         if not self.ctx.user or not self.ctx.guild:
             return self
 
         tracks = await self.db.get_tracks_list(self.ctx.guild.id, 'next')
         user = await self.users_db.get_user(self.ctx.user.id)
-        
+
         count = 15 * user['queue_page']
-        
+
         if not tracks[count + 15:]:
             self.next_button.disabled = True
         if not tracks[:count]:
             self.prev_button.disabled = True
-        
+
         self.add_item(self.prev_button)
         self.add_item(self.next_button)
-    
+
         return self
-        
+
+    async def on_timeout(self) -> None:
+        try:
+            await super().on_timeout()
+        except HTTPException:
+            pass
+        self.stop()

@@ -1,5 +1,6 @@
 import logging
-from typing import cast
+from functools import lru_cache
+from typing import cast, Final
 from math import ceil
 from os import getenv
 
@@ -10,29 +11,35 @@ from PIL import Image
 from yandex_music import Track, Album, Artist, Playlist, Label
 from discord import Embed
 
+explicit_eid: Final[str | None] = getenv('EXPLICIT_EID')
+if not explicit_eid:
+    raise ValueError('You must specify explicit emoji id in your enviroment (EXPLICIT_EID).')
+
 async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Track], vibing: bool = False) -> Embed:
     """Generate item embed. list[Track] is used for likes. If vibing is True, add vibing image.
 
     Args:
-        item (yandex_music.Track | yandex_music.Album | yandex_music.Artist | yandex_music.Playlist): Item to be processed.
+        item (Track | Album | Artist | Playlist | list[Track]): Item to be processed.
+        vibing (bool, optional): Add vibing image. Defaults to False.
 
     Returns:
         discord.Embed: Item embed.
     """
     logging.debug(f"[EMBEDS] Generating embed for type: '{type(item).__name__}'")
 
-    if isinstance(item, Track):
-        embed = await _generate_track_embed(item)
-    elif isinstance(item, Album):
-        embed = await _generate_album_embed(item)
-    elif isinstance(item, Artist):
-        embed = await _generate_artist_embed(item)
-    elif isinstance(item, Playlist):
-        embed = await _generate_playlist_embed(item)
-    elif isinstance(item, list):
-        embed = _generate_likes_embed(item)
-    else:
-        raise ValueError(f"Unknown item type: {type(item).__name__}")
+    match item:
+        case Track():
+            embed = await _generate_track_embed(item)
+        case Album():
+            embed = await _generate_album_embed(item)
+        case Artist():
+            embed = await _generate_artist_embed(item)
+        case Playlist():
+            embed = await _generate_playlist_embed(item)
+        case list():
+            embed = _generate_likes_embed(item)
+        case _:
+            raise ValueError(f"Unknown item type: {type(item).__name__}")
     
     if vibing:
         embed.set_image(
@@ -41,13 +48,12 @@ async def generate_item_embed(item: Track | Album | Artist | Playlist | list[Tra
     return embed
 
 def _generate_likes_embed(tracks: list[Track]) -> Embed:
-    track_count = len(tracks)
     cover_url = "https://avatars.yandex.net/get-music-user-playlist/11418140/favorit-playlist-cover.bb48fdb9b9f4/300x300"
 
     embed = Embed(
         title="Мне нравится",
         description="Треки, которые вам понравились.",
-        color=0xce3a26,
+        color=0xce3a26
     )
     embed.set_thumbnail(url=cover_url)
 
@@ -56,203 +62,143 @@ def _generate_likes_embed(tracks: list[Track]) -> Embed:
         if track.duration_ms:
             duration += track.duration_ms
 
-    duration_m = duration // 60000
-    duration_s = ceil(duration / 1000) - duration_m * 60
-    if duration_s == 60:
-        duration_m += 1
-        duration_s = 0
-
-    embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
-
-    if track_count is not None:
-        embed.add_field(name="Треки", value=str(track_count))
+    embed.add_field(name="Длительность", value=_format_duration(duration))
+    embed.add_field(name="Треки", value=str(len(tracks)))
 
     return embed
 
 async def _generate_track_embed(track: Track) -> Embed:
-    title = cast(str, track.title)
-    avail = cast(bool, track.available)
-    artists = track.artists_name()
+    title = track.title
     albums = [cast(str, album.title) for album in track.albums]
-    lyrics = cast(bool, track.lyrics_available)
-    duration = cast(int, track.duration_ms)
     explicit = track.explicit or track.content_warning
-    bg_video = track.background_video_uri
-    metadata = track.meta_data
-    year = track.albums[0].year
-    artist = track.artists[0]
+    year = track.albums[0].year if track.albums else None
+    artist = track.artists[0] if track.artists else None
 
-    cover_url = track.get_cover_url('400x400')
-    color = await _get_average_color_from_url(cover_url)
+    if track.cover_uri:
+        cover_url = track.get_cover_url('400x400')
+        color = await _get_average_color_from_url(cover_url)
+    else:
+        cover_url = None
+        color = 0x000
 
-    if explicit:
-        explicit_eid = getenv('EXPLICIT_EID')
-        if not explicit_eid:
-            raise ValueError('You must specify explicit emoji id in your enviroment (EXPLICIT_EID).')
+    if explicit and title:
         title += ' <:explicit:' + explicit_eid + '>'
 
-    duration_m = duration // 60000
-    duration_s = ceil(duration / 1000) - duration_m * 60
-    if duration_s == 60:
-        duration_m += 1
-        duration_s = 0
+    if artist:
+        artist_url = f"https://music.yandex.ru/artist/{artist.id}"
+        artist_cover = artist.cover
 
-    artist_url = f"https://music.yandex.ru/artist/{artist.id}"
-    artist_cover = artist.cover
-
-    if not artist_cover and artist.op_image:
-        artist_cover_url = artist.get_op_image_url()
-    elif artist_cover:
-        artist_cover_url = artist_cover.get_url()
+        if not artist_cover and artist.op_image:
+            artist_cover_url = artist.get_op_image_url()
+        elif artist_cover:
+            artist_cover_url = artist_cover.get_url()
+        else:
+            artist_cover_url = None
     else:
+        artist_url = None
         artist_cover_url = None
 
     embed = Embed(
         title=title,
         description=", ".join(albums),
-        color=color,
+        color=color
     )
     embed.set_thumbnail(url=cover_url)
-    embed.set_author(name=", ".join(artists), url=artist_url, icon_url=artist_cover_url)
+    embed.set_author(name=", ".join(track.artists_name()), url=artist_url, icon_url=artist_cover_url)
 
-    embed.add_field(name="Текст песни", value="Есть" if lyrics else "Нет")
-    embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
+    embed.add_field(name="Текст песни", value="Есть" if track.lyrics_available else "Нет")
+    
+    if isinstance(track.duration_ms, int):
+        embed.add_field(name="Длительность", value=_format_duration(track.duration_ms))
 
     if year:
         embed.add_field(name="Год выпуска", value=str(year))
 
-    if metadata:
-        if metadata.year:
-            embed.add_field(name="Год выхода", value=str(metadata.year))
+    if track.background_video_uri:
+        embed.add_field(name="Видеофон", value=f"[Ссылка]({track.background_video_uri})")
 
-        if metadata.number:
-            embed.add_field(name="Позиция", value=str(metadata.number))
-
-        if metadata.composer:
-            embed.add_field(name="Композитор", value=metadata.composer)
-
-        if metadata.version:
-            embed.add_field(name="Версия", value=metadata.version)
-
-    if bg_video:
-        embed.add_field(name="Видеофон", value=f"[Ссылка]({bg_video})")
-
-    if not avail:
+    if not (track.available or track.available_for_premium_users):
         embed.set_footer(text=f"Трек в данный момент недоступен.")
 
     return embed
 
 async def _generate_album_embed(album: Album) -> Embed:
-    title = cast(str, album.title)
-    track_count = album.track_count
-    artists = album.artists_name()
-    avail = cast(bool, album.available)
-    description = album.short_description
-    year = album.year
-    version = album.version
-    bests = album.bests
-    duration = album.duration_ms
+    title = album.title
     explicit = album.explicit or album.content_warning
-    likes_count = album.likes_count
     artist = album.artists[0]
-
     cover_url = album.get_cover_url('400x400')
-    color = await _get_average_color_from_url(cover_url)
 
     if isinstance(album.labels[0], Label):
         labels = [cast(Label, label).name for label in album.labels]
     else:
         labels = [cast(str, label) for label in album.labels]
 
-    if version:
-        title += f' *{version}*'
+    if album.version and title:
+        title += f' *{album.version}*'
 
-    if explicit:
-        explicit_eid = getenv('EXPLICIT_EID')
-        if not explicit_eid:
-            raise ValueError('You must specify explicit emoji id in your enviroment.')
+    if explicit and title:
         title += ' <:explicit:' + explicit_eid + '>'
 
     artist_url = f"https://music.yandex.ru/artist/{artist.id}"
     artist_cover = artist.cover
 
     if not artist_cover and artist.op_image:
-        artist_cover_url = artist.get_op_image_url()
+        artist_cover_url = artist.get_op_image_url('400x400')
     elif artist_cover:
-        artist_cover_url = artist_cover.get_url()
+        artist_cover_url = artist_cover.get_url(size='400x400')
     else:
         artist_cover_url = None
 
     embed = Embed(
         title=title,
-        description=description,
-        color=color,
+        description=album.short_description,
+        color=await _get_average_color_from_url(cover_url)
     )
     embed.set_thumbnail(url=cover_url)
-    embed.set_author(name=", ".join(artists), url=artist_url, icon_url=artist_cover_url)
+    embed.set_author(name=", ".join(album.artists_name()), url=artist_url, icon_url=artist_cover_url)
 
-    if year:
-        embed.add_field(name="Год выпуска", value=str(year))
+    if album.year:
+        embed.add_field(name="Год выпуска", value=str(album.year))
 
-    if duration:
-        duration_m = duration // 60000
-        duration_s = ceil(duration / 1000) - duration_m * 60
-        if duration_s == 60:
-            duration_m += 1
-            duration_s = 0
-        embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
+    if isinstance(album.duration_ms, int):
+        embed.add_field(name="Длительность", value=_format_duration(album.duration_ms))
 
-    if track_count is not None:
-        if track_count > 1:
-            embed.add_field(name="Треки", value=str(track_count))
-        else:
-            embed.add_field(name="Треки", value="Сингл")
+    if album.track_count is not None:
+        embed.add_field(name="Треки", value=str(album.track_count) if album.track_count > 1 else "Сингл")
 
-    if likes_count:
-        embed.add_field(name="Лайки", value=str(likes_count))
+    if album.likes_count is not None:
+        embed.add_field(name="Лайки", value=str(album.likes_count))
 
-    if len(labels) > 1:
-        embed.add_field(name="Лейблы", value=", ".join(labels))
-    else:
-        embed.add_field(name="Лейбл", value=", ".join(labels))
+    embed.add_field(name="Лейблы" if len(labels) > 1 else "Лейбл", value=", ".join(labels))
 
-    if not avail:
+    if not (album.available or album.available_for_premium_users):
         embed.set_footer(text=f"Альбом в данный момент недоступен.")
 
     return embed
 
 async def _generate_artist_embed(artist: Artist) -> Embed:
-    name = cast(str, artist.name)
-    likes_count = artist.likes_count
-    avail = cast(bool, artist.available)
-    counts = artist.counts
-    description = artist.description
-    ratings = artist.ratings
-    popular_tracks = artist.popular_tracks
-
     if not artist.cover:
         cover_url = artist.get_op_image_url('400x400')
     else:
         cover_url = artist.cover.get_url(size='400x400')
-    color = await _get_average_color_from_url(cover_url)
 
     embed = Embed(
-        title=name,
-        description=description.text if description else None,
-        color=color,
+        title=artist.name,
+        description=artist.description.text if artist.description else None,
+        color=await _get_average_color_from_url(cover_url)
     )
     embed.set_thumbnail(url=cover_url)
 
-    if likes_count:
-        embed.add_field(name="Лайки", value=str(likes_count))
+    if artist.likes_count:
+        embed.add_field(name="Лайки", value=str(artist.likes_count))
 
     # if ratings:
-    #    embed.add_field(name="Слушателей за месяц", value=str(ratings.month))  # Wrong numbers?
+    #    embed.add_field(name="Слушателей за месяц", value=str(ratings.month))  # Wrong numbers
 
-    if counts:
-        embed.add_field(name="Треки", value=str(counts.tracks))
+    if artist.counts:
+        embed.add_field(name="Треки", value=str(artist.counts.tracks))
     
-        embed.add_field(name="Альбомы", value=str(counts.direct_albums))
+        embed.add_field(name="Альбомы", value=str(artist.counts.direct_albums))
 
     if artist.genres:
         genres = [genre.capitalize() for genre in artist.genres]
@@ -261,23 +207,12 @@ async def _generate_artist_embed(artist: Artist) -> Embed:
         else:
             embed.add_field(name="Жанр", value=", ".join(genres))
 
-    if not avail:
+    if not artist.available or artist.reason:
         embed.set_footer(text=f"Артист в данный момент недоступен.")
 
     return embed
     
 async def _generate_playlist_embed(playlist: Playlist) -> Embed:
-    title = cast(str, playlist.title)
-    track_count = playlist.track_count
-    avail = cast(bool, playlist.available)
-    description = playlist.description
-    year = playlist.created
-    modified = playlist.modified
-    duration = playlist.duration_ms
-    likes_count = playlist.likes_count
-
-    cover_url = None
-
     if playlist.cover and playlist.cover.uri:
         cover_url = f"https://{playlist.cover.uri.replace('%%', '400x400')}"
     else:
@@ -287,6 +222,8 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
             if track and track.albums and track.albums[0].cover_uri:
                 cover_url = f"https://{track.albums[0].cover_uri.replace('%%', '400x400')}"
                 break
+        else:
+            cover_url = None
 
     if cover_url:
         color = await _get_average_color_from_url(cover_url)
@@ -294,37 +231,33 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
         color = 0x000
 
     embed = Embed(
-        title=title,
-        description=description,
-        color=color,
+        title=playlist.title,
+        description=playlist.description,
+        color=color
     )
     embed.set_thumbnail(url=cover_url)
 
-    if year:
-        embed.add_field(name="Год создания", value=str(year).split('-')[0])
+    if playlist.created:
+        embed.add_field(name="Год создания", value=str(playlist.created).split('-')[0])
 
-    if modified:
-        embed.add_field(name="Изменён", value=str(modified).split('-')[0])
+    if playlist.modified:
+        embed.add_field(name="Изменён", value=str(playlist.modified).split('-')[0])
 
-    if duration:
-        duration_m = duration // 60000
-        duration_s = ceil(duration / 1000) - duration_m * 60
-        if duration_s == 60:
-            duration_m += 1
-            duration_s = 0
-        embed.add_field(name="Длительность", value=f"{duration_m}:{duration_s:02}")
+    if playlist.duration_ms:
+        embed.add_field(name="Длительность", value=_format_duration(playlist.duration_ms))
 
-    if track_count is not None:
-        embed.add_field(name="Треки", value=str(track_count))
+    if playlist.track_count is not None:
+        embed.add_field(name="Треки", value=str(playlist.track_count))
 
-    if likes_count:
-        embed.add_field(name="Лайки", value=str(likes_count))
+    if playlist.likes_count:
+        embed.add_field(name="Лайки", value=str(playlist.likes_count))
 
-    if not avail:
+    if not playlist.available:
         embed.set_footer(text=f"Плейлист в данный момент недоступен.")
 
     return embed
 
+@lru_cache()
 async def _get_average_color_from_url(url: str) -> int:
     """Get image from url and calculate its average color to use in embeds.
 
@@ -358,5 +291,13 @@ async def _get_average_color_from_url(url: str) -> int:
         b = b_total // count
 
         return (r << 16) + (g << 8) + b
-    except Exception:
+    except (aiohttp.ClientError, IOError, ValueError):
         return 0x000
+
+def _format_duration(duration_ms: int) -> str:
+    duration_m = duration_ms // 60000
+    duration_s = ceil(duration_ms / 1000) - duration_m * 60
+    if duration_s == 60:
+        duration_m += 1
+        duration_s = 0
+    return f"{duration_m}:{duration_s:02}"

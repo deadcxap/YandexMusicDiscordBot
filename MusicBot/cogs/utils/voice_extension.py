@@ -163,6 +163,7 @@ class VoiceExtension:
 
         guild = await self.db.get_guild(gid, projection={'vibing': 1, 'current_menu': 1, 'current_track': 1})
         if not guild['current_menu']:
+            logging.debug("[VC_EXT] No current menu found")
             return False
 
         menu_message = await self.get_menu_message(ctx, guild['current_menu']) if not menu_message else menu_message
@@ -281,7 +282,7 @@ class VoiceExtension:
         uid = viber_id if viber_id else ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
 
         if not uid or not gid:
-            logging.warning("[VC_EXT] Guild ID or User ID not found in context inside 'vibe_update'")
+            logging.warning("[VC_EXT] Guild ID or User ID not found in context")
             return False
 
         user = await self.users_db.get_user(uid, projection={'ym_token': 1, 'vibe_settings': 1})
@@ -516,6 +517,7 @@ class VoiceExtension:
         vc: discord.VoiceClient | None = None,
         *,
         after: bool = False,
+        client: YMClient | None = None,
         menu_message: discord.Message | None = None,
         button_callback: bool = False
     ) -> str | None:
@@ -526,6 +528,7 @@ class VoiceExtension:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context
             vc (discord.VoiceClient, optional): Voice client.
             after (bool, optional): Whether the function is being called by the after callback. Defaults to False.
+            client (YMClient | None, optional): Yandex Music client. Defaults to None.
             menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
             button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
 
@@ -546,13 +549,6 @@ class VoiceExtension:
 
         if guild['is_stopped'] and after:
             logging.debug("[VC_EXT] Playback is stopped, skipping after callback.")
-            return None
-
-        if not (client := await self.init_ym_client(ctx, user['ym_token'])):
-            return None
-
-        if not (vc := await self.get_voice_client(ctx) if not vc else vc):
-            logging.debug("[VC_EXT] Voice client not found in 'next_track'")
             return None
 
         if guild['current_track'] and guild['current_menu'] and not guild['repeat']:
