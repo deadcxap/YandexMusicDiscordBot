@@ -1,5 +1,4 @@
 import logging
-from functools import lru_cache
 from typing import cast, Final
 from math import ceil
 from os import getenv
@@ -257,7 +256,6 @@ async def _generate_playlist_embed(playlist: Playlist) -> Embed:
 
     return embed
 
-@lru_cache()
 async def _get_average_color_from_url(url: str) -> int:
     """Get image from url and calculate its average color to use in embeds.
 
