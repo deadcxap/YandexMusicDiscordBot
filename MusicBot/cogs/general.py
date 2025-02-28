@@ -18,7 +18,7 @@ def setup(bot):
     bot.add_cog(General(bot))
 
 async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
-    if not ctx.interaction.user or not ctx.value or len(ctx.value) < 2:
+    if not ctx.interaction.user or not ctx.value or not (100 > len(ctx.value) > 2):
         return []
 
     uid = ctx.interaction.user.id
@@ -41,6 +41,10 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
 
     logging.debug(f"[GENERAL] Searching for '{ctx.value}' for user {uid}")
 
+    if content_type not in ('Трек', 'Альбом', 'Артист', 'Плейлист'):
+        logging.error(f"[GENERAL] Invalid content type '{content_type}' for user {uid}")
+        return []
+
     if content_type == 'Трек' and search.tracks is not None:
         res = [f"{item.title} {f"({item.version})" if item.version else ''} - {", ".join(item.artists_name())}" for item in search.tracks.results]
     elif content_type == 'Альбом' and search.albums is not None:
@@ -50,13 +54,13 @@ async def get_search_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
     elif content_type == 'Плейлист' and search.playlists is not None:
         res = [f"{item.title}" for item in search.playlists.results]
     else:
-        logging.warning(f"[GENERAL] Invalid content type '{content_type}' for user {uid}")
+        logging.info(f"[GENERAL] Failed to get content type '{content_type}' with name '{ctx.value}' for user {uid}")
         return []
 
     return res[:100]
 
 async def get_user_playlists_suggestions(ctx: discord.AutocompleteContext) -> list[str]:
-    if not ctx.interaction.user or not ctx.value or len(ctx.value) < 2:
+    if not ctx.interaction.user or not ctx.value or not (100 > len(ctx.value) > 2):
         return []
 
     uid = ctx.interaction.user.id
@@ -70,21 +74,25 @@ async def get_user_playlists_suggestions(ctx: discord.AutocompleteContext) -> li
     except UnauthorizedError:
         logging.info(f"[GENERAL] User {uid} provided invalid token")
         return []
-    
-    logging.debug(f"[GENERAL] Searching for '{ctx.value}' for user {uid}")
 
-    playlists_list = await client.users_playlists_list()
+    logging.debug(f"[GENERAL] Searching for '{ctx.value}' for user {uid}")
+    try:
+        playlists_list = await client.users_playlists_list()
+    except Exception as e:
+        logging.error(f"[GENERAL] Failed to get playlists for user {uid}: {e}")
+        return []
+
     return [playlist.title for playlist in playlists_list if playlist.title and ctx.value in playlist.title][:100]
 
 class General(Cog):
-    
+
     def __init__(self, bot: discord.Bot):
         self.bot = bot
         self.db = BaseGuildsDatabase()
         self.users_db = users_db
-    
+
     account = discord.SlashCommandGroup("account", "Команды, связанные с аккаунтом.")
-    
+
     @discord.slash_command(description="Получить информацию о командах YandexMusic.")
     @discord.option(
         "command",
@@ -208,10 +216,11 @@ class General(Cog):
             await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return
 
-        client = await YMClient(token).init()
-        if not client.me or not client.me.account or not client.me.account.uid:
-            logging.warning(f"Failed to fetch user info for user {ctx.user.id}")
-            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+        try:
+            client = await YMClient(token).init()
+        except UnauthorizedError:
+            logging.info(f"[GENERAL] Invalid token for user {ctx.user.id}")
+            await ctx.respond('❌ Неверный токен. Укажите новый через /account login.', delete_after=15, ephemeral=True)
             return
 
         likes = await client.users_likes_tracks()
@@ -256,7 +265,7 @@ class General(Cog):
             client = await YMClient(token).init()
         except UnauthorizedError:
             logging.info(f"[GENERAL] User {ctx.user.id} provided invalid token")
-            await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
+            await ctx.respond('❌ Неверный токен. Укажите новый через /account login.', delete_after=15, ephemeral=True)
             return
 
         search = await client.search(content_type, type_='playlist')
@@ -287,7 +296,7 @@ class General(Cog):
         autocomplete=discord.utils.basic_autocomplete(get_user_playlists_suggestions)
     )
     async def playlist(self, ctx: discord.ApplicationContext, name: str) -> None:
-        logging.info(f"[GENERAL] Playlists command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
+        logging.info(f"[GENERAL] Playlist command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
 
         token = await self.users_db.get_ym_token(ctx.user.id)
         if not token:
@@ -299,10 +308,15 @@ class General(Cog):
             client = await YMClient(token).init()
         except UnauthorizedError:
             logging.info(f"[GENERAL] User {ctx.user.id} provided invalid token")
-            await ctx.respond("❌ Недействительный токен. Если это не так, попробуйте ещё раз.", delete_after=15, ephemeral=True)
+            await ctx.respond('❌ Неверный токен. Укажите новый через /account login.', delete_after=15, ephemeral=True)
             return
 
-        playlists = await client.users_playlists_list()
+        try:
+            playlists = await client.users_playlists_list()
+        except UnauthorizedError:
+            logging.warning(f"[GENERAL] Unknown token error for user {ctx.user.id}")
+            await ctx.respond("❌ Произошла неизвестная ошибка при попытке получения плейлистов. Пожалуйста, сообщите об этом разработчику.", delete_after=15, ephemeral=True)
+            return
 
         playlist = next((playlist for playlist in playlists if playlist.title == name), None)
         if not playlist:

@@ -1,11 +1,12 @@
 import os
 import logging
+from aiohttp import ClientSession
 
 import discord
 from discord.ext.commands import Bot
+from discord.ext import tasks
 
 intents = discord.Intents.default()
-intents.message_content = True
 bot = Bot(intents=intents)
 
 cogs_list = [
@@ -18,6 +19,22 @@ cogs_list = [
 async def on_ready():
     logging.info("Bot's ready!")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="/voice vibe"))
+
+@tasks.loop(seconds=3600)
+async def update_server_count():
+    # Don't update server count in debug mode
+    if os.getenv('DEBUG') == 'True':
+        return
+
+    async with ClientSession() as session:
+        if token := os.getenv('PROMO_TOKEN_1'):
+            res = await session.post(
+                'https://api.server-discord.com/v2/bots/1325795708019806250/stats',
+                headers={'Authorization': token},
+                data={'servers': len(bot.guilds), 'shards': bot.shard_count or 1}
+            )
+            if not res.ok:
+                logging.error(f'Failed to update server count 1: {res.status} {await res.text()}')
 
 if __name__ == '__main__':
     from dotenv import load_dotenv
