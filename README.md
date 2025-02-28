@@ -5,7 +5,7 @@
 <h1 align="center">YandexMusicDiscordBot</h1>
 
 <p align="center">
-  <i>Ваш личный музыкальный бот, использующий API Яндекса, потому что а почему бы и нет!</i>
+  <i>Ваш личный музыкальный бот, использующий API Яндекса, потому что, а почему бы и нет!</i>
 </p>
 
 <div align="center">
@@ -15,8 +15,12 @@
   <a target="_blank" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA-3376f2" alt="License" align="center"/>
   </a>
-
-  </p>
+  <a target="_blank" href="https://discord.gg/TgnW8nfbFn">
+    <img src="https://img.shields.io/badge/discord-join.svg?labelColor=191937&color=6F6FF7&logo=discord" alt="Discord" align="center"/>
+  </a>
+  <a target="_blank" href="https://boosty.to/lemon_dev">
+    <img src="https://img.shields.io/badge/boosty-join.svg?labelColor=191937&color=ff8c00&&logo=boosty" alt="Boosty" align="center"/>
+  </a>
 </div>
 
 ## Предисловие
@@ -53,8 +57,9 @@
 
 Скачайте и установите зависимости. Затем клонируйте репозиторий и установите зависимости Python.
 
-```cmd
+```bash
 git clone https://github.com/Lemon4ksan/YandexMusicDiscordBot
+cd ./YandexMusicDiscordBot
 pip install -r requirements.txt
 ```
 
@@ -79,7 +84,7 @@ DEBUG='False'  # Включение DEBUG логов (True/False)
 ![image](assets/tutorial1.png)
 ![image](assets/tutorial2.png)
 
-Если у вас есть вопросы по поводу установки, задавайте их мне в [дискорде](https://discord.com/users/528481408319094784).
+Если у вас есть вопросы по поводу установки, задавайте их мне в [дискорде](https://discord.com/users/528481408319094784) (lemon_dev).
 
 ## Получение YM токена
 
@@ -89,6 +94,18 @@ DEBUG='False'  # Включение DEBUG логов (True/False)
 
 > [!WARNING]
 > Не делитесь им с другими! Он может раскрыть информацию о вашей почте и номере телефона а также дать полный доступ к вашему аккаунту Яндекс Музыки. Его нельзя сбросить.
+
+## Спонсоры
+
+Данные люди поддержали меня и проект. Спасибо им большое!
+
+<p align="left">
+   <a href="https://github.com/Vitalya2132">
+      <img width="50" alt="Vitalya2132" src="https://avatars.githubusercontent.com/u/167352945?v=4">
+   </a>
+</p>
+
+> Список обновляется вручную.
 
 ## Лицензия
 
