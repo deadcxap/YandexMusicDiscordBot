@@ -26,8 +26,11 @@ class PlayButton(Button, VoiceExtension):
         if not await self.voice_check(interaction):
             return
 
-        gid = interaction.guild.id
-        guild = await self.db.get_guild(gid, projection={'current_track': 1, 'current_menu': 1, 'vote_add': 1})
+        guild = await self.db.get_guild(interaction.guild.id, projection={'current_track': 1, 'current_menu': 1, 'vote_add': 1, 'vibing': 1})
+        if guild['vibing']:
+            await interaction.respond("❌ Нельзя добавлять треки в очередь, пока запущена волна.", ephemeral=True, delete_after=15)
+            return
+
         channel = cast(discord.VoiceChannel, interaction.channel)
         member = cast(discord.Member, interaction.user)
 
@@ -97,7 +100,7 @@ class PlayButton(Button, VoiceExtension):
             await response.add_reaction('❌')
 
             await self.db.update_vote(
-                gid,
+                interaction.guild.id,
                 response.id,
                 {
                     'positive_votes': list(),
@@ -116,11 +119,11 @@ class PlayButton(Button, VoiceExtension):
 
         if guild['current_track']:
             logging.debug(f"[FIND] Adding tracks to queue")
-            await self.db.modify_track(gid, tracks, 'next', 'extend')
+            await self.db.modify_track(interaction.guild.id, tracks, 'next', 'extend')
         else:
             logging.debug(f"[FIND] Playing track")
             track = tracks.pop(0)
-            await self.db.modify_track(gid, tracks, 'next', 'extend')
+            await self.db.modify_track(interaction.guild.id, tracks, 'next', 'extend')
             if not await self.play_track(interaction, track):
                 await interaction.respond('❌ Не удалось воспроизвести трек.', ephemeral=True, delete_after=15)
 
@@ -137,14 +140,18 @@ class MyVibeButton(Button, VoiceExtension):
     
     async def callback(self, interaction: discord.Interaction):
         logging.debug(f"[VIBE] Button callback for '{type(self.item).__name__}'")
+
         if not await self.voice_check(interaction):
             return
 
-        gid = interaction.guild_id
-        if not gid:
-            logging.warning(f"[VIBE] Guild ID is None in button callback")
+        if not interaction.guild_id or not interaction.user:
+            logging.warning(f"[VIBE] Guild ID or user is None in button callback")
             return
 
+        guild = await self.db.get_guild(interaction.guild_id, projection={'current_menu': 1, 'vibing': 1})
+        if guild['vibing']:
+            await interaction.respond('❌ Волна уже запущена. Остановите её с помощью команды /voice stop.', ephemeral=True, delete_after=15)
+            return
 
         track_type_map = {
             Track: 'track', Album: 'album', Artist: 'artist', Playlist: 'playlist', list: 'user'
@@ -162,14 +169,49 @@ class MyVibeButton(Button, VoiceExtension):
         else:
             _id = 'onyourwave'
 
-        guild = await self.db.get_guild(gid, projection={'current_menu': 1})
+        member = cast(discord.Member, interaction.user)
+        channel = cast(discord.VoiceChannel, interaction.channel)
+        
+        if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            logging.info(f"Starting vote for starting vibe in guild {interaction.guild_id}")
+
+            match self.item:
+                case Track():
+                    response_message = f"{member.mention} хочет запустить волну по треку **{self.item['title']}**.\n\n Выполнить действие?"
+                case Album():
+                    response_message = f"{member.mention} хочет запустить волну по альбому **{self.item['title']}**.\n\n Выполнить действие?"
+                case Artist():
+                    response_message = f"{member.mention} хочет запустить волну по исполнителю **{self.item['name']}**.\n\n Выполнить действие?"
+                case Playlist():
+                    response_message = f"{member.mention} хочет запустить волну по плейлисту **{self.item['title']}**.\n\n Выполнить действие?"
+                case list():
+                    response_message = f"{member.mention} хочет запустить станцию **Моя Волна**.\n\n Выполнить действие?"
+
+            message = cast(discord.Interaction, await interaction.respond(response_message))
+            response = await message.original_response()
+
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            
+            await self.db.update_vote(
+                interaction.guild_id,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'vibe_station',
+                    'vote_content': [track_type_map[type(self.item)], _id, interaction.user.id]
+                }
+            )
+            return
+
         if not guild['current_menu'] and not await self.send_menu_message(interaction, disable=True):
             await interaction.respond('❌ Не удалось отправить сообщение.', ephemeral=True, delete_after=15)
-        
+
         await self.update_vibe(interaction, track_type_map[type(self.item)], _id)
 
-        next_track = await self.db.get_track(gid, 'next')
-        if next_track:
+        if (next_track := await self.db.get_track(interaction.guild_id, 'next')):
             await self.play_track(interaction, next_track)
 
 class ListenView(View):
@@ -191,6 +233,7 @@ class ListenView(View):
             link_web = f"https://music.yandex.ru/playlist/{item.playlist_uuid}"
         elif isinstance(item, list):  # Can't open other person's likes
             self.add_item(PlayButton(item, label="Слушать в голосовом канале", style=ButtonStyle.gray))
+            self.add_item(MyVibeButton(item, label="Моя Волна", style=ButtonStyle.gray, emoji="🌊", row=1))
             return
 
         self.button1: Button = Button(label="Слушать в приложении", style=ButtonStyle.gray, url=link_app, row=0)

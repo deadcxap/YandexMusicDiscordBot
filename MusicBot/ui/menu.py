@@ -2,7 +2,10 @@ import logging
 from typing import Self, cast
 
 from discord.ui import View, Button, Item, Select
-from discord import VoiceChannel, ButtonStyle, Interaction, ApplicationContext, RawReactionActionEvent, Embed, ComponentType, SelectOption, Member, HTTPException
+from discord import (
+    Interaction, ApplicationContext, RawReactionActionEvent,
+    VoiceChannel, ButtonStyle, Embed, ComponentType, SelectOption, Member, HTTPException
+)
 
 import yandex_music.exceptions
 from yandex_music import TrackLyrics, Playlist, ClientAsync as YMClient
@@ -275,11 +278,45 @@ class MyVibeButton(Button, VoiceExtension):
         if not await self.voice_check(interaction):
             return
 
-        if not interaction.guild_id:
-            logging.warning('[MENU] No guild id in button callback')
+        if not interaction.guild_id or not interaction.user:
+            logging.warning('[MENU] No guild id or user in button callback')
+            return
+        
+        member = cast(Member, interaction.user)
+        channel = cast(VoiceChannel, interaction.channel)
+        track = await self.db.get_track(interaction.guild_id, 'current')
+        
+        if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
+            logging.info(f"Starting vote for starting vibe in guild {interaction.guild_id}")
+
+            if track:
+                response_message = f"{member.mention} хочет запустить волну по треку **{track['title']}**.\n\n Выполнить действие?"
+                _type = 'track'
+                _id = track['id']
+            else:
+                response_message = f"{member.mention} хочет запустить станцию **Моя Волна**.\n\n Выполнить действие?"
+                _type = 'user'
+                _id = 'onyourwave'
+
+            message = cast(Interaction, await interaction.respond(response_message))
+            response = await message.original_response()
+
+            await response.add_reaction('✅')
+            await response.add_reaction('❌')
+            
+            await self.db.update_vote(
+                interaction.guild_id,
+                response.id,
+                {
+                    'positive_votes': list(),
+                    'negative_votes': list(),
+                    'total_members': len(channel.members),
+                    'action': 'vibe_station',
+                    'vote_content': [_type, _id, interaction.user.id]
+                }
+            )
             return
 
-        track = await self.db.get_track(interaction.guild_id, 'current')
         if track:
             logging.info(f"[MENU] Playing vibe for track '{track["id"]}'")
             res = await self.update_vibe(
@@ -460,18 +497,32 @@ class AddToPlaylistSelect(Select, VoiceExtension):
         if not current_track:
             return
 
-        res = await self.ym_client.users_playlists_insert_track(
-            kind=f"{playlist.kind}",
-            track_id=current_track['id'],
-            album_id=current_track['albums'][0]['id'],
-            revision=playlist.revision or 1,
-            user_id=f"{playlist.uid}"
-        )
-
-        if res:
-            await interaction.respond('✅ Добавлено в плейлист', delete_after=15, ephemeral=True)
+        tracks = [track.id for track in playlist.tracks]
+        track_in_playlist = current_track['id'] in tracks
+        
+        if track_in_playlist:
+            index = tracks.index(current_track['id'])
+            res = await self.ym_client.users_playlists_delete_track(
+                kind=f"{playlist.kind}",
+                from_=index,
+                to=index + 1,
+                revision=playlist.revision or 1
+            )
         else:
+            res = await self.ym_client.users_playlists_insert_track(
+                kind=f"{playlist.kind}",
+                track_id=current_track['id'],
+                album_id=current_track['albums'][0]['id'],
+                revision=playlist.revision or 1
+            )
+
+        if not res:
             await interaction.respond('❌ Что-то пошло не так. Попробуйте позже.', delete_after=15, ephemeral=True)
+        elif track_in_playlist:
+            await interaction.respond('🗑 Трек был удалён из плейлиста.', delete_after=15, ephemeral=True)
+        else:
+            await interaction.respond('📩 Трек был добавлен в плейлист.', delete_after=15, ephemeral=True)
+            
 
 class AddToPlaylistButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -480,6 +531,11 @@ class AddToPlaylistButton(Button, VoiceExtension):
     
     async def callback(self, interaction: Interaction):
         if not await self.voice_check(interaction) or not interaction.guild_id:
+            return
+
+        current_track = await self.db.get_track(interaction.guild_id, 'current')
+        if not current_track:
+            await interaction.respond('❌ Нет воспроизводимого трека.', delete_after=15, ephemeral=True)
             return
 
         client = await self.init_ym_client(interaction)
@@ -532,7 +588,7 @@ class MenuView(View, VoiceExtension):
         self.add_to_playlist_button = AddToPlaylistButton(style=ButtonStyle.secondary, emoji='📁', row=1)
         self.vibe_button = MyVibeButton(style=ButtonStyle.secondary, emoji='🌊', row=1)
         self.vibe_settings_button = MyVibeSettingsButton(style=ButtonStyle.success, emoji='🛠', row=1)
-        
+
     async def init(self, *, disable: bool = False) -> Self:
         if not self.ctx.guild_id:
             return self
