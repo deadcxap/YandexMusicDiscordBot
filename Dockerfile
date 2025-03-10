@@ -11,5 +11,4 @@ COPY MusicBot /app/MusicBot
 
 ENV PYTHONPATH=/app
 
-# Команда для запуска бота
 CMD ["python", "./MusicBot/main.py"]
