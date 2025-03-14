@@ -7,8 +7,8 @@ from discord.ext.commands import Cog
 from yandex_music import ClientAsync as YMClient
 from yandex_music.exceptions import UnauthorizedError
 
+from MusicBot.cogs.utils import VoiceExtension
 from MusicBot.database import BaseUsersDatabase
-from MusicBot.cogs.utils import VoiceExtension, menu_views
 from MusicBot.ui import QueueView, generate_queue_embed
 
 def setup(bot: discord.Bot):
@@ -20,8 +20,7 @@ async def get_vibe_stations_suggestions(ctx: discord.AutocompleteContext) -> lis
     if not ctx.interaction.user or not ctx.value or len(ctx.value) < 2:
         return []
 
-    token = await users_db.get_ym_token(ctx.interaction.user.id)
-    if not token:
+    if not (token := await users_db.get_ym_token(ctx.interaction.user.id)):
         logging.info(f"[GENERAL] User {ctx.interaction.user.id} has no token")
         return []
 
@@ -46,63 +45,71 @@ class Voice(Cog, VoiceExtension):
 
     @Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState) -> None:
-        gid = member.guild.id
-        guild = await self.db.get_guild(gid, projection={'current_menu': 1})
+        guild = await self.db.get_guild(member.guild.id, projection={'current_menu': 1})
 
-        channel = after.channel or before.channel
-        if not channel:
+        if not after.channel or not before.channel:
             logging.warning(f"[VOICE] No channel found for member {member.id}")
             return
 
-        vc = cast(discord.VoiceClient | None, discord.utils.get(self.typed_bot.voice_clients, guild=await self.typed_bot.fetch_guild(gid)))
+        vc = cast(
+            discord.VoiceClient | None,
+            discord.utils.get(
+                self.typed_bot.voice_clients,
+                guild=await self.typed_bot.fetch_guild(member.guild.id)
+            )
+        )
 
-        for member in channel.members:
+        if not vc:
+            logging.info(f"[VOICE] No voice client found for guild {member.guild.id}")
+            return
+
+        for member in set(before.channel.members + after.channel.members):
             if member.id == self.typed_bot.user.id:  # type: ignore  # should be logged in
                 logging.info(f"[VOICE] Voice state update for member {member.id} in guild {member.guild.id}")
                 break
         else:
-            logging.debug(f"[VOICE] Bot is not in the channel {channel.id}")
+            logging.debug(f"[VOICE] Bot is not in the channel {after.channel.id}")
             return
 
-        if not vc:
-            logging.info(f"[VOICE] No voice client found for guild {gid}")
-            return
+        if len(after.channel.members) == 1:
+            logging.info(f"[VOICE] Clearing history and stopping playback for guild {member.guild.id}")
 
-        if len(channel.members) == 1:
-            logging.info(f"[VOICE] Clearing history and stopping playback for guild {gid}")
-
-            if member.guild.id in menu_views:
-                menu_views[member.guild.id].stop()
-                del menu_views[member.guild.id]
+            if member.guild.id in self.menu_views:
+                self.menu_views[member.guild.id].stop()
+                del self.menu_views[member.guild.id]
 
             if guild['current_menu']:
-                message = self.typed_bot.get_message(guild['current_menu'])
-                if message:
+                if (message := self.typed_bot.get_message(guild['current_menu'])):
                     await message.delete()
 
-            await self.db.update(gid, {
+            await self.db.update(member.guild.id, {
                 'previous_tracks': [], 'next_tracks': [], 'votes': {},
                 'current_track': None, 'current_menu': None, 'vibing': False,
                 'repeat': False, 'shuffle': False, 'is_stopped': True
             })
             vc.stop()
 
-            if member.guild.id in menu_views:
-                menu_views[member.guild.id].stop()
-                del menu_views[member.guild.id]
+            if member.guild.id in self.menu_views:
+                self.menu_views[member.guild.id].stop()
+                del self.menu_views[member.guild.id]
 
     @Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         logging.debug(f"[VOICE] Reaction added by user {payload.user_id} in channel {payload.channel_id}")
+
         if not self.typed_bot.user or not payload.member:
             return
 
-        bot_id = self.typed_bot.user.id
-        if payload.user_id == bot_id:
+        if not payload.guild_id:
+            logging.info(f"[VOICE] No guild id in reaction payload")
             return
 
-        channel = cast(discord.VoiceChannel, self.typed_bot.get_channel(payload.channel_id))
-        if not channel:
+        if payload.user_id == self.typed_bot.user.id:
+            return
+
+        channel = self.typed_bot.get_channel(payload.channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            logging.info(f"[VOICE] Channel {payload.channel_id} is not a voice channel")
             return
 
         try:
@@ -114,19 +121,16 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] Message {payload.message_id} not found in channel {payload.channel_id}")
             return
 
-        if not message or message.author.id != bot_id:
+        if not message or message.author.id != self.typed_bot.user.id:
+            logging.info(f"[VOICE] Message {payload.message_id} is not a bot message")
             return
 
         if not await self.users_db.get_ym_token(payload.user_id):
             await message.remove_reaction(payload.emoji, payload.member)
-            await channel.send("Для участия в голосовании необходимо авторизоваться через /account login.", delete_after=15)
+            await channel.send("❌ Для участия в голосовании необходимо авторизоваться через /account login.", delete_after=15)
             return
 
-        guild_id = payload.guild_id
-        if not guild_id:
-            return
-
-        guild = await self.db.get_guild(guild_id)
+        guild = await self.db.get_guild(payload.guild_id)
         votes = guild['votes']
 
         if str(payload.message_id) not in votes:
@@ -156,27 +160,28 @@ class Voice(Cog, VoiceExtension):
             await message.edit(content='Запрос был отклонён.', delete_after=15)
             del votes[str(payload.message_id)]
 
-        await self.db.update(guild_id, {'votes': votes})
+        await self.db.update(payload.guild_id, {'votes': votes})
 
     @Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
         logging.debug(f"[VOICE] Reaction removed by user {payload.user_id} in channel {payload.channel_id}")
-        if not self.typed_bot.user:
+
+        if not self.typed_bot.user or not payload.member:
             return
 
-        guild_id = payload.guild_id
-        if not guild_id:
+        if not payload.guild_id:
             return
 
-        guild = await self.db.get_guild(guild_id, projection={'votes': 1})
+        channel = self.typed_bot.get_channel(payload.channel_id)
+        if not isinstance(channel, discord.VoiceChannel):
+            logging.info(f"[VOICE] Channel {payload.channel_id} is not a voice channel")
+            return
+
+        guild = await self.db.get_guild(payload.guild_id, projection={'votes': 1})
         votes = guild['votes']
 
         if str(payload.message_id) not in votes:
             logging.info(f"[VOICE] Message {payload.message_id} not found in votes")
-            return
-
-        channel = cast(discord.VoiceChannel, self.typed_bot.get_channel(payload.channel_id))
-        if not channel:
             return
 
         try:
@@ -199,8 +204,8 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] User {payload.user_id} removed negative vote for message {payload.message_id}")
             del vote_data['negative_votes'][payload.user_id]
 
-        await self.db.update(guild_id, {'votes': votes})
-    
+        await self.db.update(payload.guild_id, {'votes': votes})
+
     @voice.command(name="menu", description="Создать или обновить меню проигрывателя.")
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Menu command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
@@ -240,9 +245,9 @@ class Voice(Cog, VoiceExtension):
     @voice.command(description="Заставить бота покинуть голосовой канал.")
     async def leave(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Leave command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
-        
+
         if not ctx.guild_id:
-            logging.warning("[VOICE] Leave command invoked without guild_id")
+            logging.info("[VOICE] Leave command invoked without guild_id")
             await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
             return
 
@@ -253,27 +258,26 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] User {ctx.author.id} does not have permissions to execute leave command in guild {ctx.guild_id}")
             await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
+        
+        if not await self.voice_check(ctx):
+            return
 
-        if (vc := await self.get_voice_client(ctx)) and await self.voice_check(ctx) and vc.is_connected:
-            res = await self.stop_playing(ctx, vc=vc, full=True)
-            if not res:
-                await ctx.respond("❌ Не удалось отключиться.", delete_after=15, ephemeral=True)
-                return
-
-            await vc.disconnect(force=True)
-            await ctx.respond("✅ Отключение успешно!", delete_after=15, ephemeral=True)
-            logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild_id}")
-        else:
+        if not (vc := await self.get_voice_client(ctx)) or not vc.is_connected:
+            logging.info(f"[VOICE] Voice client is not connected in guild {ctx.guild_id}")
             await ctx.respond("❌ Бот не подключен к голосовому каналу.", delete_after=15, ephemeral=True)
+            return
+
+        if not await self.stop_playing(ctx, vc=vc, full=True):
+            await ctx.respond("❌ Не удалось отключиться.", delete_after=15, ephemeral=True)
+            return
+
+        await vc.disconnect(force=True)
+        await ctx.respond("✅ Отключение успешно!", delete_after=15, ephemeral=True)
+        logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild_id}")
 
     @queue.command(description="Очистить очередь треков и историю прослушивания.")
     async def clear(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Clear queue command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
-        
-        if not ctx.guild_id:
-            logging.warning("[VOICE] Clear command invoked without guild_id")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
-            return
 
         if not await self.voice_check(ctx):
             return
@@ -283,14 +287,14 @@ class Voice(Cog, VoiceExtension):
 
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
             logging.info(f"Starting vote for clearing queue in guild {ctx.guild_id}")
-            
+
             response_message = f"{member.mention} хочет очистить историю прослушивания и очередь треков.\n\n Выполнить действие?."
             message = cast(discord.Interaction, await ctx.respond(response_message, delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')
             await response.add_reaction('❌')
-            
+
             await self.db.update_vote(
                 ctx.guild_id,
                 response.id,
@@ -311,11 +315,6 @@ class Voice(Cog, VoiceExtension):
     @queue.command(description="Получить очередь треков.")
     async def get(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Get queue command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
-        
-        if not ctx.guild_id:
-            logging.warning("[VOICE] Get command invoked without guild_id")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
-            return
 
         if not await self.voice_check(ctx):
             return
@@ -334,11 +333,6 @@ class Voice(Cog, VoiceExtension):
     @voice.command(description="Прервать проигрывание, удалить историю, очередь и текущий плеер.")
     async def stop(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Stop command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
-        
-        if not ctx.guild_id:
-            logging.warning("[VOICE] Stop command invoked without guild_id")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
-            return
 
         if not await self.voice_check(ctx):
             return
@@ -387,12 +381,8 @@ class Voice(Cog, VoiceExtension):
     )
     async def vibe(self, ctx: discord.ApplicationContext, name: str | None = None) -> None:
         logging.info(f"[VOICE] Vibe (user) command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
+
         if not await self.voice_check(ctx):
-            return
-        
-        if not ctx.guild_id:
-            logging.warning("[VOICE] Vibe command invoked without guild_id")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
             return
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'current_menu': 1, 'vibing': 1})
@@ -404,19 +394,11 @@ class Voice(Cog, VoiceExtension):
 
         await ctx.defer(invisible=False)
         if name:
-            token = await users_db.get_ym_token(ctx.user.id)
-            if not token:
-                logging.info(f"[GENERAL] User {ctx.user.id} has no token")
+
+            if not (client := await self.init_ym_client(ctx)):
                 return
 
-            try:
-                client = await YMClient(token).init()
-            except UnauthorizedError:
-                logging.info(f"[GENERAL] User {ctx.user.id} provided invalid token")
-                return
-
-            stations = await client.rotor_stations_list()
-            for content in stations:
+            for content in (await client.rotor_stations_list()):
                 if content.station and content.station.name == name and content.ad_params:
                     break
             else:
@@ -427,23 +409,23 @@ class Voice(Cog, VoiceExtension):
                 await ctx.respond("❌ Станция не найдена.", delete_after=15, ephemeral=True)
                 return
 
-            _type, _id = content.ad_params.other_params.split(':') if content.ad_params else (None, None)
+            vibe_type, vibe_id = content.ad_params.other_params.split(':') if content.ad_params else (None, None)
 
-            if not _type or not _id:
+            if not vibe_type or not vibe_id:
                 logging.debug(f"[VOICE] Station {name} has no ad params")
                 await ctx.respond("❌ Станция не найдена.", delete_after=15, ephemeral=True)
                 return
         else:
-            _type, _id = 'user', 'onyourwave'
+            vibe_type, vibe_id = 'user', 'onyourwave'
             content = None
-        
+
         member = cast(discord.Member, ctx.author)
         channel = cast(discord.VoiceChannel, ctx.channel)
-        
+
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
             logging.info(f"Starting vote for starting vibe in guild {ctx.guild_id}")
 
-            if _type == 'user' and _id == 'onyourwave':
+            if vibe_type == 'user' and vibe_id == 'onyourwave':
                 station = "Моя Волна"
             elif content and content.station:
                 station = content.station.name
@@ -457,7 +439,7 @@ class Voice(Cog, VoiceExtension):
 
             await message.add_reaction('✅')
             await message.add_reaction('❌')
-            
+
             await self.db.update_vote(
                 ctx.guild_id,
                 message.id,
@@ -466,12 +448,12 @@ class Voice(Cog, VoiceExtension):
                     'negative_votes': list(),
                     'total_members': len(channel.members),
                     'action': 'vibe_station',
-                    'vote_content': [_type, _id, ctx.user.id]
+                    'vote_content': [vibe_type, vibe_id, ctx.user.id]
                 }
             )
             return
 
-        if not await self.update_vibe(ctx, _type, _id):
+        if not await self.update_vibe(ctx, vibe_type, vibe_id):
             await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15, ephemeral=True)
             return
 
@@ -480,6 +462,5 @@ class Voice(Cog, VoiceExtension):
         elif not await self.send_menu_message(ctx, disable=True):
             await ctx.respond("❌ Не удалось отправить меню. Попробуйте позже.", delete_after=15, ephemeral=True)
 
-        next_track = await self.db.get_track(ctx.guild_id, 'next')
-        if next_track:
+        if (next_track := await self.db.get_track(ctx.guild_id, 'next')):
             await self.play_track(ctx, next_track)

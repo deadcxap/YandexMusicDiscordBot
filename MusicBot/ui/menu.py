@@ -9,7 +9,8 @@ from discord import (
 
 import yandex_music.exceptions
 from yandex_music import TrackLyrics, Playlist, ClientAsync as YMClient
-from MusicBot.cogs.utils.voice_extension import VoiceExtension, menu_views
+
+from MusicBot.cogs.utils import VoiceExtension
 
 class ToggleButton(Button, VoiceExtension):
     def __init__(self, *args, **kwargs):
@@ -142,9 +143,9 @@ class SwitchTrackButton(Button, VoiceExtension):
             return
 
         tracks_type = callback_type + '_tracks'
-        guild = await self.db.get_guild(gid, projection={tracks_type: 1, 'vote_switch_track': 1})
+        guild = await self.db.get_guild(gid, projection={tracks_type: 1, 'vote_switch_track': 1, 'vibing': 1})
 
-        if not guild[tracks_type]:
+        if not guild[tracks_type] and not guild['vibing']:
             logging.info(f"[MENU] No tracks in '{tracks_type}' list in guild {gid}")
             await interaction.respond(f"❌ Нет треков в {'очереди' if callback_type == 'next' else 'истории'}.", delete_after=15, ephemeral=True)
             return
@@ -176,9 +177,9 @@ class SwitchTrackButton(Button, VoiceExtension):
             return
 
         if callback_type == 'next':
-            title = await self.next_track(interaction, button_callback=True)
+            title = await self.play_next_track(interaction, button_callback=True)
         else:
-            title = await self.previous_track(interaction, button_callback=True)
+            title = await self.play_previous_track(interaction, button_callback=True)
 
         if not title:
             await interaction.respond(f"❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
@@ -205,8 +206,8 @@ class ReactionButton(Button, VoiceExtension):
         res = await self.react_track(interaction, callback_type)
 
         if callback_type == 'like' and res[0]:
-            await self._update_menu_views_dict(interaction)
-            await interaction.edit(view=menu_views[gid])
+            await self.update_menu_views_dict(interaction)
+            await interaction.edit(view=self.menu_views[gid])
             await interaction.respond(
                 f"✅ Трек был {'добавлен в понравившиеся.' if res[1] == 'added' else 'удалён из понравившихся.'}",
                 delete_after=15, ephemeral=True
@@ -214,11 +215,11 @@ class ReactionButton(Button, VoiceExtension):
 
         elif callback_type == 'dislike' and res[0]:
 
-            if len(channel.members) == 2 and not await self.next_track(interaction, vc=vc, button_callback=True):
+            if len(channel.members) == 2 and not await self.play_next_track(interaction, vc=vc, button_callback=True):
                 await interaction.respond("✅ Воспроизведение приостановлено. Нет треков в очереди.", delete_after=15)
 
-            await self._update_menu_views_dict(interaction)
-            await interaction.edit(view=menu_views[gid])
+            await self.update_menu_views_dict(interaction)
+            await interaction.edit(view=self.menu_views[gid])
             await interaction.respond(
                 f"✅ Трек был {'добавлен в дизлайки.' if res[1] == 'added' else 'удалён из дизлайков.'}",
                 delete_after=15, ephemeral=True
@@ -465,7 +466,7 @@ class MyVibeSettingsButton(Button, VoiceExtension):
         if not await self.voice_check(interaction, check_vibe_privilage=True):
             return
 
-        await interaction.respond('Настройки "Моей Волны"', view=await MyVibeSettingsView(interaction).init(), ephemeral=True)
+        await interaction.respond('Настройки **Волны**', view=await MyVibeSettingsView(interaction).init(), ephemeral=True)
 
 class AddToPlaylistSelect(Select, VoiceExtension):
     def __init__(self, ym_client: YMClient, *args, **kwargs):
@@ -601,7 +602,7 @@ class MenuView(View, VoiceExtension):
             self.shuffle_button.style = ButtonStyle.success
         
         current_track = self.guild['current_track']
-        likes = await self.get_likes(self.ctx)
+        likes = await self.get_liked_tracks(self.ctx)
 
         self.add_item(self.repeat_button)
         self.add_item(self.prev_button)
@@ -610,7 +611,7 @@ class MenuView(View, VoiceExtension):
         self.add_item(self.shuffle_button)
         
         if not isinstance(self.ctx, RawReactionActionEvent) and len(cast(VoiceChannel, self.ctx.channel).members) == 2:
-            if likes and current_track and str(current_track['id']) in [str(like.id) for like in likes]:
+            if current_track and str(current_track['id']) in [str(like.id) for like in likes]:
                 self.like_button.style = ButtonStyle.success
 
         if not current_track:
@@ -645,8 +646,7 @@ class MenuView(View, VoiceExtension):
             await self.stop_playing(self.ctx)
             await self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
 
-            message = await self.get_menu_message(self.ctx, self.guild['current_menu'])
-            if message:
+            if (message := await self.get_menu_message(self.ctx, self.guild['current_menu'])):
                 await message.delete()
                 logging.debug('[MENU] Successfully deleted menu message')
             else:
