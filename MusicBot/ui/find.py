@@ -229,8 +229,8 @@ class ListenView(View):
             link_app = f"yandexmusic://artist/{item.id}"
             link_web = f"https://music.yandex.ru/artist/{item.id}"
         elif isinstance(item, Playlist):
-            link_app = f"yandexmusic://playlist/{item.playlist_uuid}"
-            link_web = f"https://music.yandex.ru/playlist/{item.playlist_uuid}"
+            link_app = f"yandexmusic://playlists/{item.playlist_uuid}"
+            link_web = f"https://music.yandex.ru/playlists/{item.playlist_uuid}"
         elif isinstance(item, list):  # Can't open other person's likes
             self.add_item(PlayButton(item, label="Слушать в голосовом канале", style=ButtonStyle.gray))
             self.add_item(MyVibeButton(item, label="Моя Волна", style=ButtonStyle.gray, emoji="🌊", row=1))
