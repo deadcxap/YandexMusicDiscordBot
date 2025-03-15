@@ -68,9 +68,10 @@ pip install -r requirements.txt
 Создайте файл `.env` и добавьте в него переменные окружения. Пример:
 
 ```env
-TOKEN='XXXXXX'  # Токен бота
-EXPLICIT_EID='1325879701117472869'  # ID эмодзи explicit
-DEBUG='False'  # Включение DEBUG логов (True/False)
+TOKEN='XXXXXX'                          # Токен бота
+DEBUG='False'                           # Включение DEBUG логов (True/False)
+EXPLICIT_EID='1325879701117472869'      # ID эмодзи explicit
+MONGO_URI='mongodb://localhost:27017/'  # Адрес сервера MongoDB
 ```
 
 Запустите сервер MongoDB (настройки по умолчанию) и создайте базу данных YandexMusicBot с коллекциями guilds и users (через Compass или mongosh).
@@ -83,8 +84,8 @@ DEBUG='False'  # Включение DEBUG логов (True/False)
 
 ### docker cli
 
->[!NOTE]
->При этом методе запуска вам необходимо самостоятельно установить MongoDB и указать адресс сервера в команде запуска.
+> [!NOTE]
+> При этом методе запуска вам необходимо самостоятельно установить MongoDB и указать адресс сервера в команде запуска.
 
 ```bash
 docker run -d \
@@ -93,14 +94,14 @@ docker run -d \
   -e TOKEN=XXXXXX \
   -e EXPLICIT_EID=1325879701117472869 \
   -e DEBUG=False \
-  -e MONGO_URI="mongodb://mongodb:27017" \
+  -e MONGO_URI="mongodb://mongodb:27017/" \
   deadcxap/yandexmusicdiscordbot:latest
 ```
 
 ### docker-compose (рекомендованный)
 
->[!NOTE]
->При первом запуске БД и коллекции будут созданы автоматически.
+> [!NOTE]
+> При первом запуске БД и коллекции будут созданы автоматически.
 
 ```yaml
 ---
