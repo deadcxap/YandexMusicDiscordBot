@@ -8,6 +8,9 @@ from .user import User, ExplicitUser
 from .guild import Guild, ExplicitGuild, MessageVotes
 
 mongo_server = os.getenv('MONGO_URI')
+if not mongo_server:
+    raise ValueError('MONGO_URI environment variable is not set')
+
 client: AsyncMongoClient = AsyncMongoClient(mongo_server)
 
 db = client.YandexMusicBot
@@ -67,12 +70,6 @@ class BaseUsersDatabase:
         )
         return cast(str | None, user.get('ym_token') if user else None)
 
-    async def add_playlist(self, uid: int, playlist_data: dict) -> UpdateResult:
-        return await users.update_one(
-            {'_id': uid},
-            {'$push': {'playlists': playlist_data}}
-        )
-
 
 class BaseGuildsDatabase:
     DEFAULT_GUILD = Guild(
@@ -81,7 +78,6 @@ class BaseGuildsDatabase:
         current_track=None,
         current_menu=None,
         is_stopped=True,
-        always_allow_menu=False,
         allow_change_connect=True,
         vote_switch_track=True,
         vote_add=True,
@@ -89,7 +85,9 @@ class BaseGuildsDatabase:
         repeat=False,
         votes={},
         vibing=False,
-        current_viber_id=None
+        current_viber_id=None,
+        use_single_token=False,
+        single_token_uid=None
     )
 
     async def update(self, gid: int, data: Guild | dict[str, Any]) -> UpdateResult:
@@ -126,10 +124,4 @@ class BaseGuildsDatabase:
         return await guilds.update_one(
             {'_id': gid},
             {'$set': {f'votes.{mid}': data}}
-        )
-
-    async def clear_queue(self, gid: int) -> UpdateResult:
-        return await guilds.update_one(
-            {'_id': gid},
-            {'$set': {'next_tracks': []}}
         )

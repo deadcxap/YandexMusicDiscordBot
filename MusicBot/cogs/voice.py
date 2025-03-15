@@ -48,7 +48,7 @@ class Voice(Cog, VoiceExtension):
         guild = await self.db.get_guild(member.guild.id, projection={'current_menu': 1})
 
         if not after.channel or not before.channel:
-            logging.warning(f"[VOICE] No channel found for member {member.id}")
+            logging.debug(f"[VOICE] No channel found for member {member.id}")
             return
 
         vc = cast(
@@ -125,12 +125,13 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"[VOICE] Message {payload.message_id} is not a bot message")
             return
 
-        if not await self.users_db.get_ym_token(payload.user_id):
+        guild = await self.db.get_guild(payload.guild_id)
+
+        if not guild['use_single_token'] and not (guild['single_token_uid'] or await self.users_db.get_ym_token(payload.user_id)):
             await message.remove_reaction(payload.emoji, payload.member)
             await channel.send("❌ Для участия в голосовании необходимо авторизоваться через /account login.", delete_after=15)
             return
 
-        guild = await self.db.get_guild(payload.guild_id)
         votes = guild['votes']
 
         if str(payload.message_id) not in votes:
@@ -220,9 +221,14 @@ class Voice(Cog, VoiceExtension):
             logging.warning("[VOICE] Join command invoked without guild_id")
             await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
             return
+        
+        if ctx.author.id not in ctx.channel.voice_states:
+            logging.debug("[VC_EXT] User is not connected to the voice channel")
+            await ctx.respond("❌ Вы должны находиться в голосовом канале.", delete_after=15, ephemeral=True)
+            return
 
         member = cast(discord.Member, ctx.author)
-        guild = await self.db.get_guild(ctx.guild_id, projection={'allow_change_connect': 1})
+        guild = await self.db.get_guild(ctx.guild_id, projection={'allow_change_connect': 1, 'use_single_token': 1})
 
         await ctx.defer(ephemeral=True)
         if not member.guild_permissions.manage_channels and not guild['allow_change_connect']:
@@ -234,8 +240,14 @@ class Voice(Cog, VoiceExtension):
                 response_message = "❌ Не удалось подключиться к голосовому каналу."
             except discord.ClientException:
                 response_message = "❌ Бот уже находится в голосовом канале. Выключите его с помощью команды /voice leave."
+            except discord.DiscordException as e:
+                logging.error(f"[VOICE] DiscordException: {e}")
+                response_message = "❌ Произошла неизвестная ошибка при подключении к голосовому каналу."
             else:
                 response_message = "✅ Подключение успешно!"
+
+                if guild['use_single_token'] and await self.users_db.get_ym_token(ctx.author.id):
+                    await self.db.update(ctx.guild_id, {'single_token_uid': ctx.author.id})
         else:
             response_message = "❌ Вы должны отправить команду в чате голосового канала."
 
@@ -272,8 +284,10 @@ class Voice(Cog, VoiceExtension):
             return
 
         await vc.disconnect(force=True)
-        await ctx.respond("✅ Отключение успешно!", delete_after=15, ephemeral=True)
         logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild_id}")
+
+        await self.db.update(ctx.guild_id, {'single_token_uid': None})
+        await ctx.respond("✅ Отключение успешно!", delete_after=15, ephemeral=True)
 
     @queue.command(description="Очистить очередь треков и историю прослушивания.")
     async def clear(self, ctx: discord.ApplicationContext) -> None:

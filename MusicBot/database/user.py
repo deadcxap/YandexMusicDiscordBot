@@ -6,7 +6,7 @@ VibeSettingsOptions: TypeAlias = Literal[
     'russian', 'not-russian', 'without-words', 'any',
 ]
 
-class User(TypedDict, total=False):
+class User(TypedDict, total=False):  # Don't forget to change base.py if you add a new field
     ym_token: str | None
     playlists:  list[tuple[str, int]]
     playlists_page: int

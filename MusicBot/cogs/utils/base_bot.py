@@ -37,11 +37,7 @@ class BaseBot:
         """
         logging.debug("[VC_EXT] Initializing Yandex Music client")
 
-        if not token:
-            uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
-            token = await self.users_db.get_ym_token(uid) if uid else None
-
-        if not token:
+        if not (token := await self.get_ym_token(ctx)):
             logging.debug("[VC_EXT] No token found")
             await self.send_response_message(ctx, "❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return None
@@ -56,11 +52,27 @@ class BaseBot:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
             del self._ym_clients[token]
-            await self.send_response_message(ctx, "❌ Недействительный токен. Обновите его с помощью /account login.", ephemeral=True, delete_after=15)
+            await self.send_response_message(ctx, "❌ Недействительный токен Yandex Music.", ephemeral=True, delete_after=15)
             return None
 
         self._ym_clients[token] = client
         return client
+    
+    async def get_ym_token(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> str | None:
+        """Get Yandex Music token from context. It's either individual or single."""
+        
+        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+
+        if not ctx.guild_id or not uid:
+            logging.info("[VC_EXT] No guild id or user id found")
+            return None
+
+        guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid': 1})
+        
+        if guild['single_token_uid']:
+            return await self.users_db.get_ym_token(guild['single_token_uid'])
+        else:
+            return await self.users_db.get_ym_token(uid)
     
     async def send_response_message(
         self,
@@ -151,8 +163,22 @@ class BaseBot:
             self.menu_views[ctx.guild_id].stop()
         
         self.menu_views[ctx.guild_id] = await MenuView(ctx).init(disable=disable)
+    
+    async def get_discord_user_by_id(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, user_id: int) -> discord.User | None:
+        
+        if isinstance(ctx, ApplicationContext) and ctx.user:
+            logging.debug(f"[BASE_BOT] Getting user {user_id} from ApplicationContext")
+            return await ctx.bot.fetch_user(user_id)
+        elif isinstance(ctx, Interaction):
+            logging.debug(f"[BASE_BOT] Getting user {user_id} from Interaction")
+            return await ctx.client.fetch_user(user_id)
+        elif not self.bot:
+            raise ValueError("Bot instance is not available")
+        else:
+            logging.debug(f"[BASE_BOT] Getting user {user_id} from bot instance")
+            return await self.bot.fetch_user(user_id)
 
-    def _get_current_event_loop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> asyncio.AbstractEventLoop:
+    def get_current_event_loop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> asyncio.AbstractEventLoop:
         """Get the current event loop. If the context is a RawReactionActionEvent, get the loop from the self.bot instance.
 
         Args:

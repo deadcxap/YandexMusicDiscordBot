@@ -211,6 +211,11 @@ class General(Cog, BaseBot):
     async def likes(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[GENERAL] Likes command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
 
+        guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid'})
+        if guild['single_token_uid'] and ctx.author.id != guild['single_token_uid']:
+            await ctx.respond('❌ Только владелец токена может делиться личными плейлистами.', delete_after=15, ephemeral=True)
+            return
+
         if not (client := await self.init_ym_client(ctx)):
             return
 
@@ -253,6 +258,11 @@ class General(Cog, BaseBot):
         # NOTE: Recommendations can be accessed by using /find, but it's more convenient to have it in separate command.
         logging.debug(f"[GENERAL] Recommendations command invoked by user {ctx.user.id} in guild {ctx.guild_id} for type '{content_type}'")
 
+        guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid'})
+        if guild['single_token_uid'] and ctx.author.id != guild['single_token_uid']:
+            await ctx.respond('❌ Только владелец токена может делиться личными плейлистами.', delete_after=15, ephemeral=True)
+            return
+
         if not (client := await self.init_ym_client(ctx)):
             return
 
@@ -283,6 +293,11 @@ class General(Cog, BaseBot):
     )
     async def playlist(self, ctx: discord.ApplicationContext, name: str) -> None:
         logging.info(f"[GENERAL] Playlist command invoked by user {ctx.user.id} in guild {ctx.guild_id}")
+
+        guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid'})
+        if guild['single_token_uid'] and ctx.author.id != guild['single_token_uid']:
+            await ctx.respond('❌ Только владелец токена может делиться личными плейлистами.', delete_after=15, ephemeral=True)
+            return
 
         if not (client := await self.init_ym_client(ctx)):
             return
