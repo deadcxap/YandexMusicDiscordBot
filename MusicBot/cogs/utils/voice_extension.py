@@ -264,14 +264,11 @@ class VoiceExtension(BaseBot):
         """
         logging.info(f"[VC_EXT] Updating vibe for guild {ctx.guild_id} with type '{vibe_type}' and id '{item_id}'")
 
-        uid = viber_id if viber_id else ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+        uid = viber_id if viber_id else await self.get_viber_id_from_ctx(ctx)
 
         if not uid or not ctx.guild_id:
             logging.warning("[VC_EXT] Guild ID or User ID not found in context")
             return False
-
-        user = await self.users_db.get_user(uid, projection={'vibe_settings': 1})
-        guild = await self.db.get_guild(ctx.guild_id, projection={'vibing': 1, 'current_track': 1})
 
         if not (client := await self.init_ym_client(ctx)):
             return False
@@ -279,6 +276,7 @@ class VoiceExtension(BaseBot):
         if update_settings:
             logging.debug("[VIBE] Updating vibe settings")
 
+            user = await self.users_db.get_user(uid, projection={'vibe_settings': 1})
             settings = user['vibe_settings']
             await client.rotor_station_settings2(
                 f"{vibe_type}:{item_id}",
@@ -286,6 +284,8 @@ class VoiceExtension(BaseBot):
                 diversity=settings['diversity'],
                 language=settings['lang']
             )
+
+        guild = await self.db.get_guild(ctx.guild_id, projection={'vibing': 1, 'current_track': 1})
 
         if not guild['vibing']:
             try:
@@ -371,7 +371,7 @@ class VoiceExtension(BaseBot):
             guild = await self.db.get_guild(ctx.guild_id, projection={'current_viber_id': 1, 'vibing': 1})
             if guild['vibing'] and ctx.user.id != guild['current_viber_id']:
                 logging.debug("[VIBE] Context user is not the current viber")
-                await ctx.respond("❌ Вы не можете взаимодействовать с чужой волной!", delete_after=15, ephemeral=True)
+                await ctx.respond("❌ Вы не можете изменять чужую волну!", delete_after=15, ephemeral=True)
                 return False
 
         logging.debug("[VC_EXT] Voice requirements met")
@@ -504,7 +504,8 @@ class VoiceExtension(BaseBot):
         menu_message: discord.Message | None = None,
         button_callback: bool = False
     ) -> str | None:
-        """Switch to the next track in the queue. Return track title on success. Performs all additional actions like updating menu and sending vibe feedback.
+        """Switch to the next track in the queue. Return track title on success.
+        Performs all additional actions like updating menu and sending vibe feedback.
         Doesn't change track if stopped. Stop playing if tracks list is empty.
 
         Args:
@@ -519,14 +520,11 @@ class VoiceExtension(BaseBot):
         """
         logging.debug("[VC_EXT] Switching to next track")
 
-        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
-
-        if not ctx.guild_id or not uid:
+        if not (uid := await self.get_viber_id_from_ctx(ctx)) or not ctx.guild_id:
             logging.warning("[VC_EXT] Guild ID or User ID not found in context inside 'next_track'")
             return None
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'shuffle': 1, 'repeat': 1, 'is_stopped': 1, 'current_menu': 1, 'vibing': 1, 'current_track': 1})
-        user = await self.users_db.get_user(uid)
 
         if guild['is_stopped'] and after:
             logging.debug("[VC_EXT] Playback is stopped, skipping after callback.")
@@ -553,7 +551,12 @@ class VoiceExtension(BaseBot):
             next_track = await self.db.get_track(ctx.guild_id, 'next')
 
         if not next_track and guild['vibing']:
+            # NOTE: Real vibe gets next tracks after each skip. For smoother experience
+            #       we get next tracks only after all the other tracks are finished
+
             logging.debug("[VC_EXT] No next track found, generating new vibe")
+
+            user = await self.users_db.get_user(uid)
             if not user['vibe_type'] or not user['vibe_id']:
                 logging.warning("[VC_EXT] No vibe type or vibe id found in user data")
                 return None
@@ -701,9 +704,6 @@ class VoiceExtension(BaseBot):
             bool: Success status.
         """
         logging.info(f"[VOICE] Performing '{vote_data['action']}' action for message {ctx.message_id}")
-        
-        if guild['current_viber_id']:
-            ctx.user_id = guild['current_viber_id']
 
         if not ctx.guild_id:
             logging.warning("[VOICE] Guild not found")
@@ -818,20 +818,11 @@ class VoiceExtension(BaseBot):
         """
         logging.debug(f"[VC_EXT] Sending vibe feedback, type: {feedback_type}")
 
-        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
-
-        if not uid or not ctx.guild_id:
+        if not (uid := await self.get_viber_id_from_ctx(ctx)) or not ctx.guild_id:
             logging.warning("[VC_EXT] User id or guild id not found")
             return False
 
-        guild = await self.db.get_guild(ctx.guild_id, projection={'current_viber_id': 1})
-
-        if guild['current_viber_id']:
-            viber_id = guild['current_viber_id']
-        else:
-            viber_id = uid
-
-        user = await self.users_db.get_user(viber_id, projection={'vibe_batch_id': 1, 'vibe_type': 1, 'vibe_id': 1})
+        user = await self.users_db.get_user(uid, projection={'vibe_batch_id': 1, 'vibe_type': 1, 'vibe_id': 1})
 
         if not (client := await self.init_ym_client(ctx)):
             logging.info(f"[VC_EXT] Failed to init YM client for user {user['_id']}")
@@ -871,12 +862,18 @@ class VoiceExtension(BaseBot):
             logging.warning(f"[VC_EXT] Timed out while downloading track '{track.title}'")
             raise
     
-    async def _delete_menu_message(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, current_menu: int, gid: int) -> Literal[True]:
+    async def _delete_menu_message(
+        self,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
+        current_menu: int,
+        gid: int
+    ) -> Literal[True]:
         """Delete current menu message and stop menu view. Return True on success.
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            guild (ExplicitGuild): Guild.
+            current_menu (int): Current menu message ID.
+            gid (int): Guild ID.
 
         Returns:
             Literal[True]: Always returns True.
@@ -916,34 +913,32 @@ class VoiceExtension(BaseBot):
         Returns:
             (str | None): Song title or None.
         """
-        gid = ctx.guild_id
-        uid = ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
 
-        if not gid or not uid:
+        if not ctx.guild_id:
             logging.warning("Guild ID or User ID not found in context")
             return None
 
-        guild = await self.db.get_guild(gid, projection={'current_menu': 1, 'vibing': 1, 'current_track': 1})
+        guild = await self.db.get_guild(ctx.guild_id, projection={'current_menu': 1, 'vibing': 1, 'current_track': 1})
 
         if not (vc := await self.get_voice_client(ctx) if not vc else vc):
             return None
 
         try:
             if not guild['current_track'] or track.id != guild['current_track']['id']:
-                await self._download_track(gid, track)
+                await self._download_track(ctx.guild_id, track)
         except yandex_music.exceptions.TimedOutError:
             if not retry:
                 return await self._play_track(ctx, track, vc=vc, menu_message=menu_message, button_callback=button_callback, retry=True)
-            else:
-                await self.send_response_message(ctx, f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
-                logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
+
+            await self.send_response_message(ctx, f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
+            logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
             return None
 
-        async with aiofiles.open(f'music/{gid}.mp3', "rb") as f:
+        async with aiofiles.open(f'music/{ctx.guild_id}.mp3', "rb") as f:
             track_bytes = io.BytesIO(await f.read())
             song = discord.FFmpegPCMAudio(track_bytes, pipe=True, options='-vn -b:a 64k -filter:a "volume=0.15"')
 
-        await self.db.set_current_track(gid, track)
+        await self.db.set_current_track(ctx.guild_id, track)
 
         if menu_message or guild['current_menu']:
             # Updating menu message before playing to prevent delay and avoid FFMPEG lags.
@@ -966,7 +961,7 @@ class VoiceExtension(BaseBot):
             return None
 
         logging.info(f"[VC_EXT] Playing track '{track.title}'")
-        await self.db.update(gid, {'is_stopped': False})
+        await self.db.update(ctx.guild_id, {'is_stopped': False})
 
         if guild['vibing']:
             await self.send_vibe_feedback(ctx, 'trackStarted', track)

@@ -29,7 +29,7 @@ class ToggleButton(Button, VoiceExtension):
             await interaction.respond("❌ Что-то пошло не так. Попробуйте снова.", delete_after=15, ephemeral=True)
             return
         
-        if not await self.voice_check(interaction, check_vibe_privilage=True):
+        if not await self.voice_check(interaction):
             return
 
         guild = await self.db.get_guild(gid)
@@ -72,7 +72,8 @@ class PlayPauseButton(Button, VoiceExtension):
     
     async def callback(self, interaction: Interaction) -> None:
         logging.info('[MENU] Play/Pause button callback...')
-        if not await self.voice_check(interaction, check_vibe_privilage=True):
+
+        if not await self.voice_check(interaction):
             return
 
         if not (gid := interaction.guild_id) or not interaction.user:
@@ -114,11 +115,15 @@ class PlayPauseButton(Button, VoiceExtension):
             await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             return
 
+        guild = await self.db.get_guild(interaction.guild_id, projection={'single_token_uid': 1})
+        
         if vc.is_paused():
             vc.resume()
-            embed.remove_footer()
+            if guild['single_token_uid'] and (user := await self.get_discord_user_by_id(interaction, guild['single_token_uid'])):
+                embed.set_footer(text=f"Используется токен {user.display_name}", icon_url=user.display_avatar.url)
+            else:
+                embed.remove_footer()
         else:
-            vc.pause()
             embed.set_footer(text='Приостановлено')
 
         await interaction.edit(embed=embed)
@@ -139,7 +144,7 @@ class SwitchTrackButton(Button, VoiceExtension):
 
         logging.info(f'[MENU] {callback_type.capitalize()} track button callback')
 
-        if not await self.voice_check(interaction, check_vibe_privilage=True):
+        if not await self.voice_check(interaction):
             return
 
         tracks_type = callback_type + '_tracks'
@@ -240,8 +245,7 @@ class LyricsButton(Button, VoiceExtension):
         if not await self.voice_check(interaction) or not interaction.guild_id or not interaction.user:
             return
         
-        client = await self.init_ym_client(interaction)
-        if not client:
+        if not (client := await self.init_ym_client(interaction)):
             return
 
         current_track = await self.db.get_track(interaction.guild_id, 'current')
@@ -286,18 +290,18 @@ class MyVibeButton(Button, VoiceExtension):
         member = cast(Member, interaction.user)
         channel = cast(VoiceChannel, interaction.channel)
         track = await self.db.get_track(interaction.guild_id, 'current')
-        
+
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
             logging.info(f"Starting vote for starting vibe in guild {interaction.guild_id}")
 
             if track:
                 response_message = f"{member.mention} хочет запустить волну по треку **{track['title']}**.\n\n Выполнить действие?"
-                _type = 'track'
-                _id = track['id']
+                vibe_type = 'track'
+                vibe_id = track['id']
             else:
                 response_message = f"{member.mention} хочет запустить станцию **Моя Волна**.\n\n Выполнить действие?"
-                _type = 'user'
-                _id = 'onyourwave'
+                vibe_type = 'user'
+                vibe_id = 'onyourwave'
 
             message = cast(Interaction, await interaction.respond(response_message))
             response = await message.original_response()
@@ -313,7 +317,7 @@ class MyVibeButton(Button, VoiceExtension):
                     'negative_votes': list(),
                     'total_members': len(channel.members),
                     'action': 'vibe_station',
-                    'vote_content': [_type, _id, interaction.user.id]
+                    'vote_content': [vibe_type, vibe_id, interaction.user.id]
                 }
             )
             return
@@ -337,8 +341,7 @@ class MyVibeButton(Button, VoiceExtension):
             logging.info('[MENU] Failed to start the vibe')
             await interaction.respond('❌ Не удалось запустить "Мою Волну". Возможно, у вас нет подписки на Яндекс Музыку.', ephemeral=True)
 
-        next_track = await self.db.get_track(interaction.guild_id, 'next')
-        if next_track:
+        if (next_track := await self.db.get_track(interaction.guild_id, 'next')):
             await self.play_track(interaction, next_track, button_callback=True)
 
 class MyVibeSelect(Select, VoiceExtension):
@@ -539,8 +542,7 @@ class AddToPlaylistButton(Button, VoiceExtension):
             await interaction.respond('❌ Нет воспроизводимого трека.', delete_after=15, ephemeral=True)
             return
 
-        client = await self.init_ym_client(interaction)
-        if not client:
+        if not (client := await self.init_ym_client(interaction)):
             await interaction.respond('❌ Что-то пошло не так. Попробуйте позже.', delete_after=15, ephemeral=True)
             return
 
@@ -582,7 +584,7 @@ class MenuView(View, VoiceExtension):
         self.play_pause_button = PlayPauseButton(style=ButtonStyle.primary, emoji='⏯', row=0)
         self.next_button = SwitchTrackButton(style=ButtonStyle.primary, emoji='⏭', row=0, custom_id='next')
         self.prev_button = SwitchTrackButton(style=ButtonStyle.primary, emoji='⏮', row=0, custom_id='previous')
-        
+
         self.like_button = ReactionButton(style=ButtonStyle.secondary, emoji='❤️', row=1, custom_id='like')
         self.dislike_button = ReactionButton(style=ButtonStyle.secondary, emoji='💔', row=1, custom_id='dislike')
         self.lyrics_button = LyricsButton(style=ButtonStyle.secondary, emoji='📋', row=1)
@@ -594,25 +596,32 @@ class MenuView(View, VoiceExtension):
         if not self.ctx.guild_id:
             return self
 
-        self.guild = await self.db.get_guild(self.ctx.guild_id, projection={'repeat': 1, 'shuffle': 1, 'current_track': 1, 'current_menu': 1, 'vibing': 1})
-    
+        self.guild = await self.db.get_guild(self.ctx.guild_id, projection={
+            'repeat': 1, 'shuffle': 1, 'current_track': 1, 'current_menu': 1, 'vibing': 1, 'single_token_uid': 1
+        })
+
         if self.guild['repeat']:
             self.repeat_button.style = ButtonStyle.success
         if self.guild['shuffle']:
             self.shuffle_button.style = ButtonStyle.success
-        
+
         current_track = self.guild['current_track']
-        likes = await self.get_liked_tracks(self.ctx)
 
         self.add_item(self.repeat_button)
         self.add_item(self.prev_button)
         self.add_item(self.play_pause_button)
         self.add_item(self.next_button)
         self.add_item(self.shuffle_button)
-        
-        if not isinstance(self.ctx, RawReactionActionEvent) and len(cast(VoiceChannel, self.ctx.channel).members) == 2:
-            if current_track and str(current_track['id']) in [str(like.id) for like in likes]:
+
+        if not isinstance(self.ctx, RawReactionActionEvent) \
+           and len(cast(VoiceChannel, self.ctx.channel).members) == 2 \
+           and not self.guild['single_token_uid']:
+
+            if current_track and str(current_track['id']) in [str(like.id) for like in await self.get_reacted_tracks(self.ctx, 'like')]:
                 self.like_button.style = ButtonStyle.success
+
+            if current_track and str(current_track['id']) in [str(dislike.id) for dislike in await self.get_reacted_tracks(self.ctx, 'dislike')]:
+                self.dislike_button.style = ButtonStyle.success
 
         if not current_track:
             self.lyrics_button.disabled = True
@@ -621,6 +630,11 @@ class MenuView(View, VoiceExtension):
             self.add_to_playlist_button.disabled = True
         elif not current_track['lyrics_available']:
             self.lyrics_button.disabled = True
+        
+        if self.guild['single_token_uid']:
+            self.like_button.disabled = True
+            self.dislike_button.disabled = True
+            self.add_to_playlist_button.disabled = True
 
         self.add_item(self.like_button)
         self.add_item(self.dislike_button)
@@ -643,8 +657,11 @@ class MenuView(View, VoiceExtension):
             return
         
         if self.guild['current_menu']:
-            await self.stop_playing(self.ctx)
-            await self.db.update(self.ctx.guild_id, {'current_menu': None, 'previous_tracks': [], 'vibing': False})
+            await self.db.update(self.ctx.guild_id, {
+                'current_menu': None, 'repeat': False, 'shuffle': False,
+                'previous_tracks': [], 'next_tracks': [], 'votes': {},
+                'vibing': False, 'current_viber_id': None
+            })
 
             if (message := await self.get_menu_message(self.ctx, self.guild['current_menu'])):
                 await message.delete()

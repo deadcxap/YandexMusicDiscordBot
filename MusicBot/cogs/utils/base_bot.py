@@ -35,10 +35,10 @@ class BaseBot:
         Returns:
             (YMClient | None): Client or None.
         """
-        logging.debug("[VC_EXT] Initializing Yandex Music client")
+        logging.debug("[BASE_BOT] Initializing Yandex Music client")
 
         if not (token := await self.get_ym_token(ctx)):
-            logging.debug("[VC_EXT] No token found")
+            logging.debug("[BASE_BOT] No token found")
             await self.send_response_message(ctx, "❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return None
 
@@ -138,6 +138,31 @@ class BaseBot:
             logging.debug(f"[BASE_BOT] Failed to get message: {e}")
             raise
     
+    async def get_discord_user_by_id(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, user_id: int) -> discord.User | None:
+        if isinstance(ctx, ApplicationContext) and ctx.user:
+            logging.debug(f"[BASE_BOT] Getting user {user_id} from ApplicationContext")
+            return await ctx.bot.fetch_user(user_id)
+        elif isinstance(ctx, Interaction):
+            logging.debug(f"[BASE_BOT] Getting user {user_id} from Interaction")
+            return await ctx.client.fetch_user(user_id)
+        elif not self.bot:
+            raise ValueError("Bot instance is not available")
+        else:
+            logging.debug(f"[BASE_BOT] Getting user {user_id} from bot instance")
+            return await self.bot.fetch_user(user_id)
+    
+    async def get_viber_id_from_ctx(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> int | None:
+        if not ctx.guild_id:
+            logging.warning("[BASE_BOT] Guild not found")
+            return None
+
+        guild = await self.db.get_guild(ctx.guild_id, projection={'current_viber_id': 1})
+
+        if guild['current_viber_id']:
+            return guild['current_viber_id']
+
+        return ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
+
     async def update_menu_views_dict(
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
@@ -152,31 +177,17 @@ class BaseBot:
             guild (ExplicitGuild): Guild.
             disable (bool, optional): Disable menu. Defaults to False.
         """
-        logging.debug(f"[VC_EXT] Updating menu views dict for guild {ctx.guild_id}")
+        logging.debug(f"[BASE_BOT] Updating menu views dict for guild {ctx.guild_id}")
         from MusicBot.ui import MenuView
         
         if not ctx.guild_id:
-            logging.warning("[VC_EXT] Guild not found")
+            logging.warning("[BASE_BOT] Guild not found")
             return
 
         if ctx.guild_id in self.menu_views:
             self.menu_views[ctx.guild_id].stop()
         
         self.menu_views[ctx.guild_id] = await MenuView(ctx).init(disable=disable)
-    
-    async def get_discord_user_by_id(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, user_id: int) -> discord.User | None:
-        
-        if isinstance(ctx, ApplicationContext) and ctx.user:
-            logging.debug(f"[BASE_BOT] Getting user {user_id} from ApplicationContext")
-            return await ctx.bot.fetch_user(user_id)
-        elif isinstance(ctx, Interaction):
-            logging.debug(f"[BASE_BOT] Getting user {user_id} from Interaction")
-            return await ctx.client.fetch_user(user_id)
-        elif not self.bot:
-            raise ValueError("Bot instance is not available")
-        else:
-            logging.debug(f"[BASE_BOT] Getting user {user_id} from bot instance")
-            return await self.bot.fetch_user(user_id)
 
     def get_current_event_loop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> asyncio.AbstractEventLoop:
         """Get the current event loop. If the context is a RawReactionActionEvent, get the loop from the self.bot instance.
