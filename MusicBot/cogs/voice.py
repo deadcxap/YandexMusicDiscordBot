@@ -333,15 +333,13 @@ class Voice(Cog, VoiceExtension):
 
         if not await self.voice_check(ctx):
             return
-        await self.users_db.update(ctx.user.id, {'queue_page': 0})
 
         tracks = await self.db.get_tracks_list(ctx.guild_id, 'next')
         if len(tracks) == 0:
             await self.respond(ctx, "error", "Очередь прослушивания пуста.", delete_after=15, ephemeral=True)
             return
 
-        embed = generate_queue_embed(0, tracks)
-        await ctx.respond(embed=embed, view=await QueueView(ctx).init(), ephemeral=True)
+        await ctx.respond(embed=generate_queue_embed(0, tracks), view=QueueView(ctx, tracks), ephemeral=True)
 
         logging.info(f"[VOICE] Queue embed sent to user {ctx.author.id} in guild {ctx.guild_id}")
 

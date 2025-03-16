@@ -20,9 +20,6 @@ guilds: AsyncCollection[ExplicitGuild] = db.guilds
 class BaseUsersDatabase:
     DEFAULT_USER = User(
         ym_token=None,
-        playlists=[],
-        playlists_page=0,
-        queue_page=0,
         vibe_batch_id=None,
         vibe_type=None,
         vibe_id=None,
