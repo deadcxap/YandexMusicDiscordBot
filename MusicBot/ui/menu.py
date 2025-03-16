@@ -1,5 +1,5 @@
 import logging
-from typing import Self, cast
+from typing import Self, Literal, cast
 
 from discord.ui import View, Button, Item, Select
 from discord import (
@@ -26,7 +26,7 @@ class ToggleButton(Button, VoiceExtension):
         
         if not (gid := interaction.guild_id) or not interaction.user:
             logging.warning('[MENU] Failed to get guild ID.')
-            await interaction.respond("❌ Что-то пошло не так. Попробуйте снова.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте снова.", delete_after=15, ephemeral=True)
             return
         
         if not await self.voice_check(interaction):
@@ -41,7 +41,7 @@ class ToggleButton(Button, VoiceExtension):
             
             action = "выключить" if guild[callback_type] else "включить"
             task = "перемешивание треков" if callback_type == 'shuffle' else "повтор трека"
-            message = cast(Interaction, await interaction.respond(f"{member.mention} хочет {action} {task}.\n\nВыполнить действие?", delete_after=60))
+            message = cast(Interaction, await self.respond(interaction, "info", f"{member.mention} хочет {action} {task}.\n\nВыполнить действие?", delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')
@@ -63,7 +63,7 @@ class ToggleButton(Button, VoiceExtension):
         await self.db.update(gid, {callback_type: not guild[callback_type]})
 
         if not await self.update_menu_view(interaction, button_callback=True):
-            await interaction.respond("❌ Что-то пошло не так. Попробуйте снова.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте снова.", delete_after=15, ephemeral=True)
 
 class PlayPauseButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -90,7 +90,7 @@ class PlayPauseButton(Button, VoiceExtension):
             logging.info(f"[MENU] User {interaction.user.id} started vote to pause/resume track in guild {gid}")
             
             task = "приостановить" if vc.is_playing() else "возобновить"
-            message = cast(Interaction, await interaction.respond(f"{member.mention} хочет {task} проигрывание.\n\nВыполнить действие?", delete_after=60))
+            message = cast(Interaction, await self.respond(interaction, "info", f"{member.mention} хочет {task} проигрывание.\n\nВыполнить действие?", delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')
@@ -112,7 +112,7 @@ class PlayPauseButton(Button, VoiceExtension):
         try:
             embed = interaction.message.embeds[0]
         except IndexError:
-            await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             return
 
         guild = await self.db.get_guild(interaction.guild_id, projection={'single_token_uid': 1})
@@ -153,7 +153,7 @@ class SwitchTrackButton(Button, VoiceExtension):
 
         if not guild[tracks_type] and not guild['vibing']:
             logging.info(f"[MENU] No tracks in '{tracks_type}' list in guild {gid}")
-            await interaction.respond(f"❌ Нет треков в {'очереди' if callback_type == 'next' else 'истории'}.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", f"Нет треков в {'очереди' if callback_type == 'next' else 'истории'}.", delete_after=15, ephemeral=True)
             return
 
         member = cast(Member, interaction.user)
@@ -163,7 +163,7 @@ class SwitchTrackButton(Button, VoiceExtension):
             logging.info(f"[MENU] User {interaction.user.id} started vote to skip track in guild {gid}")
 
             task = "пропустить текущий трек" if callback_type == 'next' else "вернуться к предыдущему треку"
-            message = cast(Interaction, await interaction.respond(f"{member.mention} хочет {task}.\n\nВыполнить переход?", delete_after=60))
+            message = cast(Interaction, await self.respond(interaction, "info", f"{member.mention} хочет {task}.\n\nВыполнить переход?", delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')
@@ -188,7 +188,7 @@ class SwitchTrackButton(Button, VoiceExtension):
             title = await self.play_previous_track(interaction, button_callback=True)
 
         if not title:
-            await interaction.respond(f"❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
 
 class ReactionButton(Button, VoiceExtension):
     def __init__(self, *args, **kwargs):
@@ -206,7 +206,7 @@ class ReactionButton(Button, VoiceExtension):
             return
 
         if not (vc := await self.get_voice_client(interaction)) or not vc.is_playing:
-            await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
 
         channel = cast(VoiceChannel, interaction.channel)
         res = await self.react_track(interaction, callback_type)
@@ -214,26 +214,75 @@ class ReactionButton(Button, VoiceExtension):
         if callback_type == 'like' and res[0]:
             await self.update_menu_views_dict(interaction)
             await interaction.edit(view=self.menu_views[gid])
-            await interaction.respond(
-                f"✅ Трек был {'добавлен в понравившиеся.' if res[1] == 'added' else 'удалён из понравившихся.'}",
+            await self.respond(
+                interaction, "success",
+                f"Трек был {'добавлен в понравившиеся.' if res[1] == 'added' else 'удалён из понравившихся.'}",
                 delete_after=15, ephemeral=True
             )
 
         elif callback_type == 'dislike' and res[0]:
 
             if len(channel.members) == 2 and not await self.play_next_track(interaction, vc=vc, button_callback=True):
-                await interaction.respond("✅ Воспроизведение приостановлено. Нет треков в очереди.", delete_after=15)
+                await self.respond(interaction, "info", "Воспроизведение приостановлено. Нет треков в очереди.", delete_after=15)
 
             await self.update_menu_views_dict(interaction)
             await interaction.edit(view=self.menu_views[gid])
-            await interaction.respond(
-                f"✅ Трек был {'добавлен в дизлайки.' if res[1] == 'added' else 'удалён из дизлайков.'}",
+            await self.respond(
+                interaction, "success",
+                f"Трек был {'добавлен в дизлайки.' if res[1] == 'added' else 'удалён из дизлайков.'}",
                 delete_after=15, ephemeral=True
             )
 
         else:
             logging.debug(f"[VC_EXT] Failed to get {callback_type} tracks")
-            await interaction.respond("❌ Операция не удалась. Попробуйте позже.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Операция не удалась. Попробуйте позже.", delete_after=15, ephemeral=True)
+    
+    async def react_track(
+        self,
+        ctx: ApplicationContext | Interaction,
+        action: Literal['like', 'dislike']
+    ) -> tuple[bool, Literal['added', 'removed'] | None]:
+        """Like or dislike current track. Return track title on success.
+
+        Args:
+            ctx (ApplicationContext | Interaction): Context.
+            action (Literal['like', 'dislike']): Action to perform.
+
+        Returns:
+            (tuple[bool, Literal['added', 'removed'] | None]): Tuple with success status and action.
+        """
+        if not (gid := ctx.guild_id) or not ctx.user:
+            logging.warning("[VC_EXT] Guild or User not found")
+            return (False, None)
+
+        if not (current_track := await self.db.get_track(gid, 'current')):
+            logging.debug("[VC_EXT] Current track not found")
+            return (False, None)
+
+        if not (client := await self.init_ym_client(ctx)):
+            return (False, None)
+
+        if action == 'like':
+            tracks = await client.users_likes_tracks()
+            add_func = client.users_likes_tracks_add
+            remove_func = client.users_likes_tracks_remove
+        else:
+            tracks = await client.users_dislikes_tracks()
+            add_func = client.users_dislikes_tracks_add
+            remove_func = client.users_dislikes_tracks_remove
+
+        if tracks is None:
+            logging.debug(f"[VC_EXT] No {action}s found")
+            return (False, None)
+
+        if str(current_track['id']) not in [str(track.id) for track in tracks]:
+            logging.debug(f"[VC_EXT] Track not found in {action}s. Adding...")
+            await add_func(current_track['id'])
+            return (True, 'added')
+        else:
+            logging.debug(f"[VC_EXT] Track found in {action}s. Removing...")
+            await remove_func(current_track['id'])
+            return (True, 'removed')
 
 class LyricsButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -249,8 +298,7 @@ class LyricsButton(Button, VoiceExtension):
         if not (client := await self.init_ym_client(interaction)):
             return
 
-        current_track = await self.db.get_track(interaction.guild_id, 'current')
-        if not current_track:
+        if not (current_track := await self.db.get_track(interaction.guild_id, 'current')):
             logging.debug('[MENU] No current track found')
             return
 
@@ -258,7 +306,7 @@ class LyricsButton(Button, VoiceExtension):
             lyrics = cast(TrackLyrics, await client.tracks_lyrics(current_track['id']))
         except yandex_music.exceptions.NotFoundError:
             logging.debug('[MENU] Lyrics not found')
-            await interaction.respond("❌ Текст песни не найден. Яндекс нам соврал (опять)!", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Текст песни не найден. Яндекс нам соврал (опять)!", delete_after=15, ephemeral=True)
             return
 
         embed = Embed(
@@ -304,7 +352,7 @@ class MyVibeButton(Button, VoiceExtension):
                 vibe_type = 'user'
                 vibe_id = 'onyourwave'
 
-            message = cast(Interaction, await interaction.respond(response_message))
+            message = cast(Interaction, await self.respond(interaction, "info", response_message))
             response = await message.original_response()
 
             await response.add_reaction('✅')
@@ -340,7 +388,7 @@ class MyVibeButton(Button, VoiceExtension):
 
         if not res:
             logging.info('[MENU] Failed to start the vibe')
-            await interaction.respond('❌ Не удалось запустить "Мою Волну". Возможно, у вас нет подписки на Яндекс Музыку.', ephemeral=True)
+            await self.respond(interaction, "error", "Не удалось запустить **Мою Волну**. Возможно, у вас нет подписки на Яндекс Музыку.", ephemeral=True)
 
         if (next_track := await self.db.get_track(interaction.guild_id, 'next')):
             await self.play_track(interaction, next_track, button_callback=True)
@@ -359,7 +407,7 @@ class MyVibeSelect(Select, VoiceExtension):
         if not interaction.user:
             logging.warning('[MENU] No user in select callback')
             return
-        
+
         custom_id = interaction.custom_id
         if custom_id not in ('diversity', 'mood', 'lang'):
             logging.error(f'[MENU] Unknown custom_id: {custom_id}')
@@ -470,7 +518,7 @@ class MyVibeSettingsButton(Button, VoiceExtension):
         if not await self.voice_check(interaction, check_vibe_privilage=True):
             return
 
-        await interaction.respond('Настройки **Волны**', view=await MyVibeSettingsView(interaction).init(), ephemeral=True)
+        await self.respond(interaction, "info", "Настройки **Волны**", view=await MyVibeSettingsView(interaction).init(), ephemeral=True)
 
 class AddToPlaylistSelect(Select, VoiceExtension):
     def __init__(self, ym_client: YMClient, *args, **kwargs):
@@ -522,11 +570,11 @@ class AddToPlaylistSelect(Select, VoiceExtension):
             )
 
         if not res:
-            await interaction.respond('❌ Что-то пошло не так. Попробуйте позже.', delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
         elif track_in_playlist:
-            await interaction.respond('🗑 Трек был удалён из плейлиста.', delete_after=15, ephemeral=True)
+            await self.respond(interaction, "success", "🗑 Трек был удалён из плейлиста.", delete_after=15, ephemeral=True)
         else:
-            await interaction.respond('📩 Трек был добавлен в плейлист.', delete_after=15, ephemeral=True)
+            await self.respond(interaction, "success", "📩 Трек был добавлен в плейлист.", delete_after=15, ephemeral=True)
             
 
 class AddToPlaylistButton(Button, VoiceExtension):
@@ -540,20 +588,20 @@ class AddToPlaylistButton(Button, VoiceExtension):
 
         current_track = await self.db.get_track(interaction.guild_id, 'current')
         if not current_track:
-            await interaction.respond('❌ Нет воспроизводимого трека.', delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             return
 
         if not (client := await self.init_ym_client(interaction)):
-            await interaction.respond('❌ Что-то пошло не так. Попробуйте позже.', delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
             return
 
         if not (vc := await self.get_voice_client(interaction)) or not vc.is_playing:
-            await interaction.respond("❌ Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             return
 
         playlists = await client.users_playlists_list()
         if not playlists:
-            await interaction.respond('❌ У вас нет плейлистов.', delete_after=15, ephemeral=True)
+            await self.respond(interaction, "error", "У вас нет плейлистов.", delete_after=15, ephemeral=True)
             return
 
         view = View(

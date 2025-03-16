@@ -68,7 +68,7 @@ class VoiceExtension(BaseBot):
 
         await self.update_menu_views_dict(ctx, disable=disable)
 
-        interaction = await self.send_response_message(ctx, embed=embed, view=self.menu_views[ctx.guild_id])
+        interaction = await self.respond(ctx, embed=embed, view=self.menu_views[ctx.guild_id])
         response = await interaction.original_response() if isinstance(interaction, discord.Interaction) else interaction
 
         if response:
@@ -338,40 +338,40 @@ class VoiceExtension(BaseBot):
         """
         if not ctx.user:
             logging.info("[VC_EXT] User not found in context inside 'voice_check'")
-            await ctx.respond("❌ Пользователь не найден.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Пользователь не найден.", delete_after=15, ephemeral=True)
             return False
 
         if not ctx.guild_id:
             logging.info("[VC_EXT] Guild id not found in context inside 'voice_check'")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Эта команда может быть использована только на сервере.", delete_after=15, ephemeral=True)
             return False
 
         if not await self.get_ym_token(ctx):
             logging.debug(f"[VC_EXT] No token found for user {ctx.user.id}")
-            await ctx.respond("❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return False
 
         if not isinstance(ctx.channel, discord.VoiceChannel):
             logging.debug("[VC_EXT] User is not in a voice channel")
-            await ctx.respond("❌ Вы должны отправить команду в чате голосового канала.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Вы должны отправить команду в чате голосового канала.", delete_after=15, ephemeral=True)
             return False
         
         if ctx.user.id not in ctx.channel.voice_states:
             logging.debug("[VC_EXT] User is not connected to the voice channel")
-            await ctx.respond("❌ Вы должны находиться в голосовом канале.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Вы должны находиться в голосовом канале.", delete_after=15, ephemeral=True)
             return False
 
         voice_clients = ctx.client.voice_clients if isinstance(ctx, Interaction) else ctx.bot.voice_clients
         if not discord.utils.get(voice_clients, guild=ctx.guild):
             logging.debug("[VC_EXT] Voice client not found")
-            await ctx.respond("❌ Добавьте бота в голосовой канал при помощи команды /voice join.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Добавьте бота в голосовой канал при помощи команды /voice join.", delete_after=15, ephemeral=True)
             return False
         
         if check_vibe_privilage:
             guild = await self.db.get_guild(ctx.guild_id, projection={'current_viber_id': 1, 'vibing': 1})
             if guild['vibing'] and ctx.user.id != guild['current_viber_id']:
                 logging.debug("[VIBE] Context user is not the current viber")
-                await ctx.respond("❌ Вы не можете изменять чужую волну!", delete_after=15, ephemeral=True)
+                await self.respond(ctx, "error", "Вы не можете изменять чужую волну!", delete_after=15, ephemeral=True)
                 return False
 
         logging.debug("[VC_EXT] Voice requirements met")
@@ -535,7 +535,7 @@ class VoiceExtension(BaseBot):
             await self.db.modify_track(ctx.guild_id, guild['current_track'], 'previous', 'insert')
 
         if after and not await self.update_menu_view(ctx, menu_message=menu_message, disable=True):
-            await self.send_response_message(ctx, "❌ Не удалось обновить меню.", ephemeral=True, delete_after=15)
+            await self.respond(ctx, "error", "Не удалось обновить меню.", ephemeral=True, delete_after=15)
 
         if guild['vibing'] and guild['current_track']:
             await self.send_vibe_feedback(ctx, 'trackFinished' if after else 'skip', guild['current_track'])
@@ -573,7 +573,11 @@ class VoiceExtension(BaseBot):
 
         return None
 
-    async def play_previous_track(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, button_callback: bool = False) -> str | None:
+    async def play_previous_track(
+        self,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
+        button_callback: bool = False
+    ) -> str | None:
         """Switch to the previous track in the queue. Repeat current track if no previous one found.
         Return track title on success. Should be called only if there's already track playing.
 
@@ -643,55 +647,12 @@ class VoiceExtension(BaseBot):
             return []
 
         return collection.tracks
-
-    async def react_track(
-        self,
-        ctx: ApplicationContext | Interaction,
-        action: Literal['like', 'dislike']
-    ) -> tuple[bool, Literal['added', 'removed'] | None]:
-        """Like or dislike current track. Return track title on success.
-
-        Args:
-            ctx (ApplicationContext | Interaction): Context.
-            action (Literal['like', 'dislike']): Action to perform.
-
-        Returns:
-            (tuple[bool, Literal['added', 'removed'] | None]): Tuple with success status and action.
-        """
-        if not (gid := ctx.guild_id) or not ctx.user:
-            logging.warning("[VC_EXT] Guild or User not found")
-            return (False, None)
-
-        if not (current_track := await self.db.get_track(gid, 'current')):
-            logging.debug("[VC_EXT] Current track not found")
-            return (False, None)
-
-        if not (client := await self.init_ym_client(ctx)):
-            return (False, None)
-
-        if action == 'like':
-            tracks = await client.users_likes_tracks()
-            add_func = client.users_likes_tracks_add
-            remove_func = client.users_likes_tracks_remove
-        else:
-            tracks = await client.users_dislikes_tracks()
-            add_func = client.users_dislikes_tracks_add
-            remove_func = client.users_dislikes_tracks_remove
-
-        if tracks is None:
-            logging.debug(f"[VC_EXT] No {action}s found")
-            return (False, None)
-
-        if str(current_track['id']) not in [str(track.id) for track in tracks]:
-            logging.debug(f"[VC_EXT] Track not found in {action}s. Adding...")
-            await add_func(current_track['id'])
-            return (True, 'added')
-        else:
-            logging.debug(f"[VC_EXT] Track found in {action}s. Removing...")
-            await remove_func(current_track['id'])
-            return (True, 'removed')
     
-    async def proccess_vote(self, ctx: RawReactionActionEvent, guild: ExplicitGuild, channel: VoiceChannel, vote_data: MessageVotes) -> bool:
+    async def proccess_vote(
+        self,
+        ctx: RawReactionActionEvent,
+        guild: ExplicitGuild,
+        vote_data: MessageVotes) -> bool:
         """Proccess vote and perform action from `vote_data` and respond. Return True on success.
 
         Args:
@@ -710,16 +671,16 @@ class VoiceExtension(BaseBot):
             return False
 
         if not guild['current_menu'] and not await self.send_menu_message(ctx):
-            await channel.send(content=f"❌ Не удалось отправить меню! Попробуйте ещё раз.", delete_after=15)
+            await self.respond(ctx, "error", "Не удалось отправить меню! Попробуйте ещё раз.", delete_after=15)
             return False
 
         if vote_data['action'] in ('next', 'previous'):
             if not guild.get(f'{vote_data['action']}_tracks'):
                 logging.info(f"[VOICE] No {vote_data['action']} tracks found for message {ctx.message_id}")
-                await channel.send(content=f"❌ Очередь пуста!", delete_after=15)
+                await self.respond(ctx, "error", "Очередь пуста!", delete_after=15)
 
             elif not (await self.play_next_track(ctx) if vote_data['action'] == 'next' else await self.play_previous_track(ctx)):
-                await channel.send(content=f"❌ Ошибка при смене трека! Попробуйте ещё раз.", delete_after=15)
+                await self.respond(ctx, "error", "Ошибка при смене трека! Попробуйте ещё раз.", delete_after=15)
                 return False
 
         elif vote_data['action'] == 'add_track':
@@ -730,9 +691,9 @@ class VoiceExtension(BaseBot):
             await self.db.modify_track(guild['_id'], vote_data['vote_content'], 'next', 'append')
 
             if guild['current_track']:
-                await channel.send(content=f"✅ Трек был добавлен в очередь!", delete_after=15)
+                await self.respond(ctx, "success", "Трек был добавлен в очередь!", delete_after=15)
             elif not await self.play_next_track(ctx):
-                await channel.send(content=f"❌ Ошибка при воспроизведении! Попробуйте ещё раз.", delete_after=15)
+                await self.respond(ctx, "error", "Ошибка при воспроизведении! Попробуйте ещё раз.", delete_after=15)
                 return False
 
         elif vote_data['action'] in ('add_album', 'add_artist', 'add_playlist'):
@@ -744,14 +705,14 @@ class VoiceExtension(BaseBot):
             await self.db.modify_track(guild['_id'], vote_data['vote_content'], 'next', 'extend')
 
             if guild['current_track']:
-                await channel.send(content=f"✅ Контент был добавлен в очередь!", delete_after=15)
+                await self.respond(ctx, "success", "Контент был добавлен в очередь!", delete_after=15)
             elif not await self.play_next_track(ctx):
-                await channel.send(content=f"❌ Ошибка при воспроизведении! Попробуйте ещё раз.", delete_after=15)
+                await self.respond(ctx, "error", "Ошибка при воспроизведении! Попробуйте ещё раз.", delete_after=15)
                 return False
 
         elif vote_data['action'] == 'play/pause':
             if not (vc := await self.get_voice_client(ctx)):
-                await channel.send(content=f"❌ Ошибка при изменении воспроизведения! Попробуйте ещё раз.", delete_after=15)
+                await self.respond(ctx, "error", "Ошибка при изменении воспроизведения! Попробуйте ещё раз.", delete_after=15)
                 return False
 
             if vc.is_playing():
@@ -767,31 +728,31 @@ class VoiceExtension(BaseBot):
 
         elif vote_data['action'] == 'clear_queue':
             await self.db.update(ctx.guild_id, {'previous_tracks': [], 'next_tracks': []})
-            await channel.send("✅ Очередь и история сброшены.", delete_after=15)
+            await self.respond(ctx, "success", "Очередь и история сброшены.", delete_after=15)
 
         elif vote_data['action'] == 'stop':
             if await self.stop_playing(ctx, full=True):
-                await channel.send("✅ Воспроизведение остановлено.", delete_after=15)
+                await self.respond(ctx, "success", "Воспроизведение остановлено.", delete_after=15)
             else:
-                await channel.send("❌ Произошла ошибка при остановке воспроизведения.", delete_after=15)
+                await self.respond(ctx, "error", "Произошла ошибка при остановке воспроизведения.", delete_after=15)
                 return False
-        
+
         elif vote_data['action'] == 'vibe_station':
             vibe_type, vibe_id, viber_id = vote_data['vote_content'] if isinstance(vote_data['vote_content'], list) else (None, None, None)
             
             if not vibe_type or not vibe_id or not viber_id:
                 logging.warning(f"[VOICE] Recieved empty vote context for message {ctx.message_id}")
-                await channel.send("❌ Произошла ошибка при обновлении станции.", delete_after=15)
+                await self.respond(ctx, "error", "Произошла ошибка при обновлении станции.", delete_after=15)
                 return False
 
             if not await self.update_vibe(ctx, vibe_type, vibe_id, viber_id=viber_id):
-                await channel.send("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15)
+                await self.respond(ctx, "error", "Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15)
                 return False
 
             if (next_track := await self.db.get_track(ctx.guild_id, 'next')):
                 await self.play_track(ctx, next_track)
             else:
-                await channel.send("❌ Не удалось воспроизвести трек.", delete_after=15)
+                await self.respond(ctx, "error", "Не удалось воспроизвести трек.", delete_after=15)
                 return False
 
         else:
@@ -825,8 +786,6 @@ class VoiceExtension(BaseBot):
         user = await self.users_db.get_user(uid, projection={'vibe_batch_id': 1, 'vibe_type': 1, 'vibe_id': 1})
 
         if not (client := await self.init_ym_client(ctx)):
-            logging.info(f"[VC_EXT] Failed to init YM client for user {user['_id']}")
-            await self.send_response_message(ctx, "❌ Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
             return False
         
         if feedback_type not in ('radioStarted', 'trackStarted') and track['duration_ms']:
@@ -930,8 +889,13 @@ class VoiceExtension(BaseBot):
             if not retry:
                 return await self._play_track(ctx, track, vc=vc, menu_message=menu_message, button_callback=button_callback, retry=True)
 
-            await self.send_response_message(ctx, f"😔 Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
+            await self.respond(ctx, "error", "Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
             logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
+            return None
+
+        except yandex_music.exceptions.InvalidBitrateError:
+            logging.error(f"[VC_EXT] Invalid bitrate while playing track '{track.title}'")
+            await self.respond(ctx, "error", "У трека отсутствует необходимый битрейт. Его проигрывание невозможно.", delete_after=15, ephemeral=True)
             return None
 
         async with aiofiles.open(f'music/{ctx.guild_id}.mp3', "rb") as f:
@@ -953,11 +917,7 @@ class VoiceExtension(BaseBot):
             vc.play(song, after=lambda exc: asyncio.run_coroutine_threadsafe(self.play_next_track(ctx, after=True), loop))
         except discord.errors.ClientException as e:
             logging.error(f"[VC_EXT] Error while playing track '{track.title}': {e}")
-            await self.send_response_message(ctx, f"❌ Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15, ephemeral=True)
-            return None
-        except yandex_music.exceptions.InvalidBitrateError:
-            logging.error(f"[VC_EXT] Invalid bitrate while playing track '{track.title}'")
-            await self.send_response_message(ctx, f"❌ У трека отсутствует необходимый битрейт. Его проигрывание невозможно.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Не удалось проиграть трек. Попробуйте сбросить меню.", delete_after=15, ephemeral=True)
             return None
 
         logging.info(f"[VC_EXT] Playing track '{track.title}'")

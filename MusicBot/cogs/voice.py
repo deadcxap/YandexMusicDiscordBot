@@ -152,7 +152,7 @@ class Voice(Cog, VoiceExtension):
         if len(vote_data['positive_votes']) >= required_votes:
             logging.info(f"[VOICE] Enough positive votes for message {payload.message_id}")
             await message.delete()
-            await self.proccess_vote(payload, guild, channel, vote_data)
+            await self.proccess_vote(payload, guild, vote_data)
             del votes[str(payload.message_id)]
 
         elif len(vote_data['negative_votes']) >= required_votes:
@@ -211,7 +211,7 @@ class Voice(Cog, VoiceExtension):
     async def menu(self, ctx: discord.ApplicationContext) -> None:
         logging.info(f"[VOICE] Menu command invoked by user {ctx.author.id} in guild {ctx.guild_id}")
         if await self.voice_check(ctx) and not await self.send_menu_message(ctx):
-            await ctx.respond("❌ Не удалось создать меню.", ephemeral=True)
+            await self.respond(ctx, "error", "Не удалось создать меню.", ephemeral=True)
 
     @voice.command(name="join", description="Подключиться к голосовому каналу, в котором вы сейчас находитесь.")
     async def join(self, ctx: discord.ApplicationContext) -> None:
@@ -219,40 +219,41 @@ class Voice(Cog, VoiceExtension):
         
         if not ctx.guild_id:
             logging.warning("[VOICE] Join command invoked without guild_id")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
+            await self.respond(ctx, "error", "Эта команда может быть использована только на сервере.", ephemeral=True)
             return
         
         if ctx.author.id not in ctx.channel.voice_states:
             logging.debug("[VC_EXT] User is not connected to the voice channel")
-            await ctx.respond("❌ Вы должны находиться в голосовом канале.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Вы должны находиться в голосовом канале.", delete_after=15, ephemeral=True)
             return
 
         member = cast(discord.Member, ctx.author)
         guild = await self.db.get_guild(ctx.guild_id, projection={'allow_change_connect': 1, 'use_single_token': 1})
 
         await ctx.defer(ephemeral=True)
+
         if not member.guild_permissions.manage_channels and not guild['allow_change_connect']:
-            response_message = "❌ У вас нет прав для выполнения этой команды."
+            response_message = ("error", "У вас нет прав для выполнения этой команды.")
         elif isinstance(ctx.channel, discord.VoiceChannel):
             try:
                 await ctx.channel.connect()
             except TimeoutError:
-                response_message = "❌ Не удалось подключиться к голосовому каналу."
+                response_message = ("error", "Не удалось подключиться к голосовому каналу.")
             except discord.ClientException:
-                response_message = "❌ Бот уже находится в голосовом канале. Выключите его с помощью команды /voice leave."
+                response_message = ("error", "Бот уже находится в голосовом канале.\nВыключите его с помощью команды /voice leave.")
             except discord.DiscordException as e:
                 logging.error(f"[VOICE] DiscordException: {e}")
-                response_message = "❌ Произошла неизвестная ошибка при подключении к голосовому каналу."
+                response_message = ("error", "Произошла неизвестная ошибка при подключении к голосовому каналу.")
             else:
-                response_message = "✅ Подключение успешно!"
+                response_message = ("success", "Подключение успешно!")
 
                 if guild['use_single_token'] and await self.users_db.get_ym_token(ctx.author.id):
                     await self.db.update(ctx.guild_id, {'single_token_uid': ctx.author.id})
         else:
-            response_message = "❌ Вы должны отправить команду в чате голосового канала."
+            response_message = ("error", "Вы должны отправить команду в чате голосового канала.")
 
         logging.info(f"[VOICE] Join command response: {response_message}")
-        await ctx.respond(response_message, delete_after=15, ephemeral=True)
+        await self.respond(ctx, *response_message, delete_after=15, ephemeral=True)
 
     @voice.command(description="Заставить бота покинуть голосовой канал.")
     async def leave(self, ctx: discord.ApplicationContext) -> None:
@@ -260,7 +261,7 @@ class Voice(Cog, VoiceExtension):
 
         if not ctx.guild_id:
             logging.info("[VOICE] Leave command invoked without guild_id")
-            await ctx.respond("❌ Эта команда может быть использована только на сервере.", ephemeral=True)
+            await self.respond(ctx, "error", "Эта команда может быть использована только на сервере.", ephemeral=True)
             return
 
         member = cast(discord.Member, ctx.author)
@@ -268,7 +269,7 @@ class Voice(Cog, VoiceExtension):
 
         if not member.guild_permissions.manage_channels and not guild['allow_change_connect']:
             logging.info(f"[VOICE] User {ctx.author.id} does not have permissions to execute leave command in guild {ctx.guild_id}")
-            await ctx.respond("❌ У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "У вас нет прав для выполнения этой команды.", delete_after=15, ephemeral=True)
             return
         
         if not await self.voice_check(ctx):
@@ -276,18 +277,18 @@ class Voice(Cog, VoiceExtension):
 
         if not (vc := await self.get_voice_client(ctx)) or not vc.is_connected:
             logging.info(f"[VOICE] Voice client is not connected in guild {ctx.guild_id}")
-            await ctx.respond("❌ Бот не подключен к голосовому каналу.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Бот не подключен к голосовому каналу.", delete_after=15, ephemeral=True)
             return
 
         if not await self.stop_playing(ctx, vc=vc, full=True):
-            await ctx.respond("❌ Не удалось отключиться.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Не удалось отключиться.", delete_after=15, ephemeral=True)
             return
 
         await vc.disconnect(force=True)
         logging.info(f"[VOICE] Successfully disconnected from voice channel in guild {ctx.guild_id}")
 
         await self.db.update(ctx.guild_id, {'single_token_uid': None})
-        await ctx.respond("✅ Отключение успешно!", delete_after=15, ephemeral=True)
+        await self.respond(ctx, "success", "Отключение успешно!", delete_after=15, ephemeral=True)
 
     @queue.command(description="Очистить очередь треков и историю прослушивания.")
     async def clear(self, ctx: discord.ApplicationContext) -> None:
@@ -303,7 +304,7 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"Starting vote for clearing queue in guild {ctx.guild_id}")
 
             response_message = f"{member.mention} хочет очистить историю прослушивания и очередь треков.\n\n Выполнить действие?."
-            message = cast(discord.Interaction, await ctx.respond(response_message, delete_after=60))
+            message = cast(discord.Interaction, await self.respond(ctx, "info", response_message, delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')
@@ -323,7 +324,7 @@ class Voice(Cog, VoiceExtension):
             return
 
         await self.db.update(ctx.guild_id, {'previous_tracks': [], 'next_tracks': []})
-        await ctx.respond("✅ Очередь и история сброшены.", delete_after=15, ephemeral=True)
+        await self.respond(ctx, "success", "Очередь и история сброшены.", delete_after=15, ephemeral=True)
         logging.info(f"[VOICE] Queue and history cleared in guild {ctx.guild_id}")
 
     @queue.command(description="Получить очередь треков.")
@@ -336,7 +337,7 @@ class Voice(Cog, VoiceExtension):
 
         tracks = await self.db.get_tracks_list(ctx.guild_id, 'next')
         if len(tracks) == 0:
-            await ctx.respond("❌ Очередь пуста.", ephemeral=True)
+            await self.respond(ctx, "error", "Очередь прослушивания пуста.", delete_after=15, ephemeral=True)
             return
 
         embed = generate_queue_embed(0, tracks)
@@ -358,7 +359,7 @@ class Voice(Cog, VoiceExtension):
             logging.info(f"Starting vote for stopping playback in guild {ctx.guild_id}")
 
             response_message = f"{member.mention} хочет полностью остановить проигрывание.\n\n Выполнить действие?."
-            message = cast(discord.Interaction, await ctx.respond(response_message, delete_after=60))
+            message = cast(discord.Interaction, await self.respond(ctx, "info", response_message, delete_after=60))
             response = await message.original_response()
 
             await response.add_reaction('✅')
@@ -380,9 +381,9 @@ class Voice(Cog, VoiceExtension):
         await ctx.defer(ephemeral=True)
         res = await self.stop_playing(ctx, full=True)
         if res:
-            await ctx.respond("✅ Воспроизведение остановлено.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "success", "Воспроизведение остановлено.", delete_after=15, ephemeral=True)
         else:
-            await ctx.respond("❌ Произошла ошибка при остановке воспроизведения.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Произошла ошибка при остановке воспроизведения.", delete_after=15, ephemeral=True)
 
     @voice.command(description="Запустить Мою Волну.")
     @discord.option(
@@ -403,7 +404,7 @@ class Voice(Cog, VoiceExtension):
 
         if guild['vibing']:
             logging.info(f"[VOICE] Action declined: vibing is already enabled in guild {ctx.guild_id}")
-            await ctx.respond("❌ Моя Волна уже включена. Используйте /voice stop, чтобы остановить воспроизведение.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Моя Волна уже включена. Используйте /voice stop, чтобы остановить воспроизведение.", delete_after=15, ephemeral=True)
             return
 
         await ctx.defer(invisible=False)
@@ -420,14 +421,14 @@ class Voice(Cog, VoiceExtension):
 
             if not content:
                 logging.debug(f"[VOICE] Station {name} not found")
-                await ctx.respond("❌ Станция не найдена.", delete_after=15, ephemeral=True)
+                await self.respond(ctx, "error", "Станция не найдена.", delete_after=15, ephemeral=True)
                 return
 
             vibe_type, vibe_id = content.ad_params.other_params.split(':') if content.ad_params else (None, None)
 
             if not vibe_type or not vibe_id:
                 logging.debug(f"[VOICE] Station {name} has no ad params")
-                await ctx.respond("❌ Станция не найдена.", delete_after=15, ephemeral=True)
+                await self.respond(ctx, "error", "Станция не найдена.", delete_after=15, ephemeral=True)
                 return
         else:
             vibe_type, vibe_id = 'user', 'onyourwave'
@@ -445,11 +446,11 @@ class Voice(Cog, VoiceExtension):
                 station = content.station.name
             else:
                 logging.warning(f"[VOICE] Station {name} not found")
-                await ctx.respond("❌ Станция не найдена.", delete_after=15, ephemeral=True)
+                await self.respond(ctx, "error", "Станция не найдена.", delete_after=15, ephemeral=True)
                 return
 
             response_message = f"{member.mention} хочет запустить станцию **{station}**.\n\n Выполнить действие?"
-            message = cast(discord.WebhookMessage, await ctx.respond(response_message))
+            message = cast(discord.WebhookMessage, await self.respond(ctx, "info", response_message, delete_after=60))
 
             await message.add_reaction('✅')
             await message.add_reaction('❌')
@@ -468,13 +469,13 @@ class Voice(Cog, VoiceExtension):
             return
 
         if not await self.update_vibe(ctx, vibe_type, vibe_id):
-            await ctx.respond("❌ Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Операция не удалась. Возможно, у вес нет подписки на Яндекс Музыку.", delete_after=15, ephemeral=True)
             return
 
         if guild['current_menu']:
-            await ctx.respond("✅ Моя Волна включена.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "success", "Моя Волна включена.", delete_after=15, ephemeral=True)
         elif not await self.send_menu_message(ctx, disable=True):
-            await ctx.respond("❌ Не удалось отправить меню. Попробуйте позже.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Не удалось отправить меню. Попробуйте позже.", delete_after=15, ephemeral=True)
 
         if (next_track := await self.db.get_track(ctx.guild_id, 'next')):
             await self.play_track(ctx, next_track)

@@ -162,7 +162,7 @@ class General(Cog, BaseBot):
                 "Запустить станцию. Без уточнения станции, запускает Мою Волну.\n```/voice vibe <название станции>```"
             )
         else:
-            await ctx.respond('❌ Неизвестная команда.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Неизвестная команда.", delete_after=15, ephemeral=True)
             return
 
         await ctx.respond(embed=embed, ephemeral=True)
@@ -176,16 +176,16 @@ class General(Cog, BaseBot):
             client = await YMClient(token).init()
         except UnauthorizedError:
             logging.info(f"[GENERAL] Invalid token provided by user {ctx.author.id}")
-            await ctx.respond('❌ Недействительный токен.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Недействительный токен.", delete_after=15, ephemeral=True)
             return
 
         if not client.me or not client.me.account:
             logging.warning(f"[GENERAL] Failed to get user info for user {ctx.author.id}")
-            await ctx.respond('❌ Не удалось получить информацию о пользователе.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Не удалось получить информацию о пользователе.", delete_after=15, ephemeral=True)
             return
 
         await self.users_db.update(ctx.author.id, {'ym_token': token})
-        await ctx.respond(f'✅ Привет, {client.me.account.first_name}!', delete_after=15, ephemeral=True)
+        await self.respond(ctx, "success", f"Привет, {client.me.account.first_name}!", delete_after=15, ephemeral=True)
 
         self._ym_clients[token] = client
         logging.info(f"[GENERAL] User {ctx.author.id} logged in successfully")
@@ -196,7 +196,7 @@ class General(Cog, BaseBot):
 
         if not (token := await self.users_db.get_ym_token(ctx.user.id)):
             logging.info(f"[GENERAL] No token found for user {ctx.author.id}")
-            await ctx.respond('❌ Токен не указан.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Токен не указан.", delete_after=15, ephemeral=True)
             return
 
         if token in self._ym_clients:
@@ -205,7 +205,7 @@ class General(Cog, BaseBot):
         await self.users_db.update(ctx.user.id, {'ym_token': None})
         logging.info(f"[GENERAL] Token removed for user {ctx.author.id}")
 
-        await ctx.respond(f'✅ Токен был удалён.', delete_after=15, ephemeral=True)
+        await self.respond(ctx, "success", "Токен был удалён.", delete_after=15, ephemeral=True)
 
     @account.command(description="Получить плейлист «Мне нравится»")
     async def likes(self, ctx: discord.ApplicationContext) -> None:
@@ -213,7 +213,7 @@ class General(Cog, BaseBot):
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid'})
         if guild['single_token_uid'] and ctx.author.id != guild['single_token_uid']:
-            await ctx.respond('❌ Только владелец токена может делиться личными плейлистами.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Только владелец токена может делиться личными плейлистами.", delete_after=15, ephemeral=True)
             return
 
         if not (client := await self.init_ym_client(ctx)):
@@ -223,16 +223,20 @@ class General(Cog, BaseBot):
             likes = await client.users_likes_tracks()
         except UnauthorizedError:
             logging.warning(f"[GENERAL] Unknown token error for user {ctx.user.id}")
-            await ctx.respond("❌ Произошла неизвестная ошибка при попытке получения лайков. Пожалуйста, сообщите об этом разработчику.", delete_after=15, ephemeral=True)
+            await self.respond(
+                ctx, "error",
+                "Произошла неизвестная ошибка при попытке получения лайков. Пожалуйста, сообщите об этом разработчику.",
+                delete_after=15, ephemeral=True
+            )
             return
 
         if likes is None:
             logging.info(f"[GENERAL] Failed to fetch likes for user {ctx.user.id}")
-            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Что-то пошло не так. Повторите попытку позже.", delete_after=15, ephemeral=True)
             return
         elif not likes:
             logging.info(f"[GENERAL] Empty likes for user {ctx.user.id}")
-            await ctx.respond('❌ У вас нет треков в плейлисте «Мне нравится».', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "У вас нет треков в плейлисте «Мне нравится».", delete_after=15, ephemeral=True)
             return
 
         await ctx.defer()  # Sometimes it takes a while to fetch all tracks, so we defer the response
@@ -260,7 +264,7 @@ class General(Cog, BaseBot):
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid'})
         if guild['single_token_uid'] and ctx.author.id != guild['single_token_uid']:
-            await ctx.respond('❌ Только владелец токена может делиться личными плейлистами.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Только владелец токена может делиться личными плейлистами.", delete_after=15, ephemeral=True)
             return
 
         if not (client := await self.init_ym_client(ctx)):
@@ -269,16 +273,16 @@ class General(Cog, BaseBot):
         search = await client.search(content_type, type_='playlist')
         if not search or not search.playlists:
             logging.info(f"[GENERAL] Failed to fetch recommendations for user {ctx.user.id}")
-            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Что-то пошло не так. Повторите попытку позже.", delete_after=15, ephemeral=True)
             return
 
         if (playlist := search.playlists.results[0]) is None:
             logging.info(f"[GENERAL] Failed to fetch recommendations for user {ctx.user.id}")
-            await ctx.respond('❌ Что-то пошло не так. Повторите попытку позже.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Что-то пошло не так. Повторите попытку позже.", delete_after=15, ephemeral=True)
 
         if not await playlist.fetch_tracks_async():
             logging.info(f"[GENERAL] User {ctx.user.id} search for '{content_type}' returned no tracks")
-            await ctx.respond("❌ Пустой плейлист.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Пустой плейлист.", delete_after=15, ephemeral=True)
             return
 
         await ctx.respond(embed=await generate_item_embed(playlist), view=ListenView(playlist))
@@ -296,7 +300,7 @@ class General(Cog, BaseBot):
 
         guild = await self.db.get_guild(ctx.guild_id, projection={'single_token_uid'})
         if guild['single_token_uid'] and ctx.author.id != guild['single_token_uid']:
-            await ctx.respond('❌ Только владелец токена может делиться личными плейлистами.', delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "олько владелец токена может делиться личными плейлистами.", delete_after=15, ephemeral=True)
             return
 
         if not (client := await self.init_ym_client(ctx)):
@@ -306,17 +310,17 @@ class General(Cog, BaseBot):
             playlists = await client.users_playlists_list()
         except UnauthorizedError:
             logging.warning(f"[GENERAL] Unknown token error for user {ctx.user.id}")
-            await ctx.respond("❌ Произошла неизвестная ошибка при попытке получения плейлистов. Пожалуйста, сообщите об этом разработчику.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Произошла неизвестная ошибка при попытке получения плейлистов. Пожалуйста, сообщите об этом разработчику.", delete_after=15, ephemeral=True)
             return
 
         if not (playlist := next((playlist for playlist in playlists if playlist.title == name), None)):
             logging.info(f"[GENERAL] User {ctx.user.id} playlist '{name}' not found")
-            await ctx.respond("❌ Плейлист не найден.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Плейлист не найден.", delete_after=15, ephemeral=True)
             return
 
         if not await playlist.fetch_tracks_async():
             logging.info(f"[GENERAL] User {ctx.user.id} playlist '{name}' is empty")
-            await ctx.respond("❌ Плейлист пуст.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Плейлист пуст.", delete_after=15, ephemeral=True)
             return
 
         await ctx.respond(embed=await generate_item_embed(playlist), view=ListenView(playlist))
@@ -349,7 +353,7 @@ class General(Cog, BaseBot):
 
         if not (search_result := await client.search(name, nocorrect=True)):
             logging.warning(f"Failed to search for '{name}' for user {ctx.user.id}")
-            await ctx.respond("❌ Что-то пошло не так. Повторите попытку позже.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Что-то пошло не так. Повторите попытку позже.", delete_after=15, ephemeral=True)
             return
 
         if content_type == 'Трек':
@@ -363,7 +367,7 @@ class General(Cog, BaseBot):
 
         if not content:
             logging.info(f"[GENERAL] User {ctx.user.id} search for '{name}' returned no results")
-            await ctx.respond("❌ По запросу ничего не найдено.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "По запросу ничего не найдено.", delete_after=15, ephemeral=True)
             return
 
         result = content.results[0]

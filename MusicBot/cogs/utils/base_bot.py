@@ -7,7 +7,7 @@ from yandex_music import ClientAsync as YMClient
 
 import discord
 from discord.ui import View
-from discord import Interaction, ApplicationContext, RawReactionActionEvent
+from discord import Interaction, ApplicationContext, RawReactionActionEvent, MISSING
 
 from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
 
@@ -39,7 +39,7 @@ class BaseBot:
 
         if not (token := await self.get_ym_token(ctx)):
             logging.debug("[BASE_BOT] No token found")
-            await self.send_response_message(ctx, "❌ Укажите токен через /account login.", delete_after=15, ephemeral=True)
+            await self.respond(ctx, "error", "Укажите токен через /account login.", delete_after=15, ephemeral=True)
             return None
 
         try:
@@ -52,7 +52,7 @@ class BaseBot:
             client = await YMClient(token).init()
         except yandex_music.exceptions.UnauthorizedError:
             del self._ym_clients[token]
-            await self.send_response_message(ctx, "❌ Недействительный токен Yandex Music.", ephemeral=True, delete_after=15)
+            await self.respond(ctx, "error", "Недействительный токен Yandex Music.", ephemeral=True, delete_after=15)
             return None
 
         self._ym_clients[token] = client
@@ -74,30 +74,44 @@ class BaseBot:
         else:
             return await self.users_db.get_ym_token(uid)
     
-    async def send_response_message(
+    async def respond(
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
+        response_type: Literal['info', 'success', 'error'] | None = None,
         content: str | None = None,
         *,
         delete_after: float | None = None,
         ephemeral: bool = False,
+        embed: discord.Embed | None = None,
         view: discord.ui.View | None = None,
-        embed: discord.Embed | None = None
+        **kwargs: Any
     ) -> discord.Interaction | discord.WebhookMessage | discord.Message | None:
-        """Send response message based on context type. self.bot must be set in order to use RawReactionActionEvent context type.
+        """Send response message based on context type. `self.bot` must be set in order to use RawReactionActionEvent context type.
         RawReactionActionEvent can't be ephemeral.
         
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            content (str): Message content to send.
-            delete_after (float | None, optional): Time after which the message will be deleted. Defaults to None.
+            content (str): Message content to send. If embed is not set, used as description.
+            response_type (Literal['info', 'success', 'error'] | None, optional): Response type. Applies if embed is not specified.
+            delete_after (float, optional): Time after which the message will be deleted. Defaults to None.
             ephemeral (bool, optional): Whether the message is ephemeral. Defaults to False.
-            view (discord.ui.View | None, optional): Discord view. Defaults to None.
-            embed (discord.Embed | None, optional): Discord embed. Defaults to None.
+            embed (discord.Embed, optional): Discord embed. Defaults to None.
+            view (discord.ui.View, optional): Discord view. Defaults to None.
+            kwargs: Additional arguments for embed generation. Applies if embed is not specified.
         
         Returns:
             (discord.InteractionMessage | discord.WebhookMessage | discord.Message | None): Message or None. Type depends on the context type.
         """
+        
+        if not embed and response_type:
+            if content:
+                kwargs['description'] = content
+            embed = self.generate_response_embed(response_type, **kwargs)
+            content = None
+        
+        if not isinstance(ctx, RawReactionActionEvent) and ctx.response.is_done():
+            view = MISSING
+        
         if not isinstance(ctx, RawReactionActionEvent):
             return await ctx.respond(content, delete_after=delete_after, ephemeral=ephemeral, view=view, embed=embed)
         elif self.bot:
@@ -106,7 +120,7 @@ class BaseBot:
                 return await channel.send(content, delete_after=delete_after, view=view, embed=embed)  # type: ignore
 
         return None
-   
+
     async def get_message_by_id(
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
@@ -188,7 +202,27 @@ class BaseBot:
             self.menu_views[ctx.guild_id].stop()
         
         self.menu_views[ctx.guild_id] = await MenuView(ctx).init(disable=disable)
+    
+    def generate_response_embed(
+        self,
+        embed_type: Literal['info', 'success', 'error'] = 'info',
+        **kwargs: Any
+    ) -> discord.Embed:
+        
+        embed = discord.Embed(**kwargs)
+        embed.set_author(name='YandexMusic', icon_url="https://github.com/Lemon4ksan/YandexMusicDiscordBot/blob/main/assets/Logo.png?raw=true")
 
+        if embed_type == 'info':
+            embed.color = 0xfed42b
+        elif embed_type == 'success':
+            embed.set_author(name = "✅ Успех")
+            embed.color = discord.Color.green()
+        else:
+            embed.set_author(name = "❌ Ошибка")
+            embed.color = discord.Color.red()
+
+        return embed
+    
     def get_current_event_loop(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent) -> asyncio.AbstractEventLoop:
         """Get the current event loop. If the context is a RawReactionActionEvent, get the loop from the self.bot instance.
 
