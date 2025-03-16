@@ -124,6 +124,7 @@ class PlayPauseButton(Button, VoiceExtension):
             else:
                 embed.remove_footer()
         else:
+            vc.pause()
             embed.set_footer(text='Приостановлено')
 
         await interaction.edit(embed=embed)
