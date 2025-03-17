@@ -78,7 +78,8 @@ MONGO_URI='mongodb://localhost:27017/'  # Адрес сервера MongoDB
 
 Запустите бота (`python ./MusicBot/main.py`).
 
-## Запуск в Docker
+## Запуск в Docker ![Main Build](https://img.shields.io/github/actions/workflow/status/deadcxap/YandexMusicDiscordBot/docker-image.yml?branch=main&label=main) ![Dev Build](https://img.shields.io/github/actions/workflow/status/deadcxap/YandexMusicDiscordBot/docker-image.yml?branch=dev&label=dev)
+
 
 Возможен запуск как из командной строки, так и с помощью docker-compose.
 
