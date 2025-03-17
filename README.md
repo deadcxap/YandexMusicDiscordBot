@@ -78,15 +78,14 @@ MONGO_URI='mongodb://localhost:27017/'  # Адрес сервера MongoDB
 
 Запустите бота (`python ./MusicBot/main.py`).
 
-## Запуск в Docker ![Main Build](https://img.shields.io/github/actions/workflow/status/deadcxap/YandexMusicDiscordBot/docker-image.yml?branch=main&label=main) ![Dev Build](https://img.shields.io/github/actions/workflow/status/deadcxap/YandexMusicDiscordBot/docker-image.yml?branch=dev&label=dev)
-
+## Запуск в Docker ![Main Build](https://img.shields.io/github/actions/workflow/status/lemon4ksan/YandexMusicDiscordBot/docker-image.yml?branch=main&label=main) ![Dev Build](https://img.shields.io/github/actions/workflow/status/lemon4ksan/YandexMusicDiscordBot/docker-image.yml?branch=dev&label=dev)
 
 Возможен запуск как из командной строки, так и с помощью docker-compose.
 
 ### docker cli
 
 > [!NOTE]
-> При этом методе запуска вам необходимо самостоятельно установить MongoDB и указать адресс сервера в команде запуска.
+> При этом методе запуска вам необходимо самостоятельно установить MongoDB и указать адрес сервера в команде запуска.
 
 ```bash
 docker run -d \
@@ -103,43 +102,6 @@ docker run -d \
 
 > [!NOTE]
 > При первом запуске БД и коллекции будут созданы автоматически.
-
-```yaml
----
-services:
-  app:
-    container_name: yandex-music-discord-bot
-    image: deadcxap/yandexmusicdiscordbot:latest
-    restart: unless-stopped
-    depends_on:
-      - mongodb
-    env_file:
-      - .env
-    environment:
-      MONGO_URI: "mongodb://ymdb-mongodb:27017"
-    networks:
-      - ymdb_network
-  mongodb:
-    container_name: ymdb-mongodb
-    image: mongo:latest
-    restart: unless-stopped
-    volumes:
-      - mongodb_data:/data/db
-      - ./init-mongodb.js:/docker-entrypoint-initdb.d/init-mongodb.js:ro
-    networks:
-      - ymdb_network
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017 --quiet
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-volumes:
-  mongodb_data:
-
-networks:
-  ymdb_network:
-```
 
 ```bash
 docker-compose up -d

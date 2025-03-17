@@ -1,7 +1,7 @@
 services:
   app:
     container_name: yandex-music-discord-bot
-    image: deadcxap/yandexmusicdiscordbot:latest
+    image: lemon4ksan/yandexmusicdiscordbot:latest
     restart: unless-stopped
     depends_on:
       - mongodb
