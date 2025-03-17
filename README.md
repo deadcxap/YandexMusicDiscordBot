@@ -95,7 +95,7 @@ docker run -d \
   -e EXPLICIT_EID=1325879701117472869 \
   -e DEBUG=False \
   -e MONGO_URI="mongodb://mongodb:27017/" \
-  deadcxap/yandexmusicdiscordbot:latest
+  lemon4ksan/yandexmusicdiscordbot:latest
 ```
 
 ### docker-compose (рекомендованный)
