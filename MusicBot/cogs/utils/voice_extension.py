@@ -8,7 +8,7 @@ import yandex_music.exceptions
 from yandex_music import Track, TrackShort, ClientAsync as YMClient
 
 import discord
-from discord import Interaction, ApplicationContext, RawReactionActionEvent, VoiceChannel
+from discord import Interaction, ApplicationContext, RawReactionActionEvent
 
 from MusicBot.cogs.utils.base_bot import BaseBot
 from MusicBot.cogs.utils import generate_item_embed
@@ -63,11 +63,9 @@ class VoiceExtension(BaseBot):
 
         if guild['current_menu']:
             logging.info(f"[VC_EXT] Deleting old menu message {guild['current_menu']} in guild {ctx.guild_id}")
-            if (message := await self.get_menu_message(ctx, guild['current_menu'])):
-                await message.delete()
+            await self._delete_menu_message(ctx, guild['current_menu'], ctx.guild_id)
 
-        await self.update_menu_views_dict(ctx, disable=disable)
-
+        await self.init_menu_view(ctx, ctx.guild_id, disable=disable)
         interaction = await self.respond(ctx, embed=embed, view=self.menu_views[ctx.guild_id])
         response = await interaction.original_response() if isinstance(interaction, discord.Interaction) else interaction
 
@@ -120,7 +118,6 @@ class VoiceExtension(BaseBot):
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            menu_mid (int): Id of the menu message to update. Defaults to None.
             menu_message (discord.Message | None): Message to update. If None, fetches menu from channel using `menu_mid`. Defaults to None.
             button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
 
@@ -174,7 +171,7 @@ class VoiceExtension(BaseBot):
         else:
             embed.remove_footer()
 
-        await self.update_menu_views_dict(ctx)
+        await self.menu_views[ctx.guild_id].update()
         try:
             if isinstance(ctx, Interaction) and button_callback:
                 # If interaction from menu buttons
@@ -193,7 +190,6 @@ class VoiceExtension(BaseBot):
         self,
         ctx: ApplicationContext | Interaction | RawReactionActionEvent,
         *,
-        menu_message: discord.Message | None = None,
         button_callback: bool = False,
         disable: bool = False
     ) -> bool:
@@ -201,8 +197,6 @@ class VoiceExtension(BaseBot):
 
         Args:
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
-            guild (ExplicitGuild): Guild data.
-            menu_message (discord.Message | None, optional): Menu message to update. Defaults to None.
             button_callback (bool, optional): If True, the interaction is from a button callback. Defaults to False.
             disable (bool, optional): Disable the view if True. Defaults to False.
 
@@ -210,29 +204,33 @@ class VoiceExtension(BaseBot):
             bool: True if the view was updated, False otherwise.
         """
         logging.debug("[VC_EXT] Updating menu view")
-
+        
         if not ctx.guild_id:
-            logging.warning("[VC_EXT] Guild ID not found in context inside 'update_menu_view'")
+            logging.warning("[VC_EXT] Guild ID not found in context")
             return False
 
-        if not menu_message:
-            guild = await self.db.get_guild(ctx.guild_id, projection={'current_menu': 1})
-            if not guild['current_menu']:
-                return False
+        guild = await self.db.get_guild(ctx.guild_id, projection={'current_menu': 1})
 
-            menu_message = await self.get_menu_message(ctx, guild['current_menu']) if not menu_message else menu_message
-
-        if not menu_message:
+        if not guild['current_menu']:
+            logging.warning("[VC_EXT] Current menu not found in guild data")
             return False
 
-        await self.update_menu_views_dict(ctx, disable=disable)
+        if ctx.guild_id not in self.menu_views:
+            logging.debug("[VC_EXT] Creating new menu view")
+            await self.init_menu_view(ctx, ctx.guild_id, disable=disable)
+
+        view = self.menu_views[ctx.guild_id]
+        await view.update(disable=disable)
+
         try:
             if isinstance(ctx, Interaction) and button_callback:
                 # If interaction from menu buttons
-                await ctx.edit(view=self.menu_views[ctx.guild_id])
+                await ctx.edit(view=view)
             else:
                 # If interaction from other buttons or commands. They should have their own response.
-                await menu_message.edit(view=self.menu_views[ctx.guild_id])
+                if (menu_message := await self.get_menu_message(ctx, guild['current_menu'])):
+                    await menu_message.edit(view=view)
+
         except discord.DiscordException as e:
             logging.warning(f"[VC_EXT] Error while updating menu view: {e}")
             return False
@@ -411,7 +409,6 @@ class VoiceExtension(BaseBot):
         track: Track | dict[str, Any],
         *,
         vc: discord.VoiceClient | None = None,
-        menu_message: discord.Message | None = None,
         button_callback: bool = False,
     ) -> str | None:
         """Play `track` in the voice channel. Avoids additional vibe feedback used in `next_track` and `previous_track`.
@@ -421,7 +418,6 @@ class VoiceExtension(BaseBot):
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             track (dict[str, Any]): Track to play.
             vc (discord.VoiceClient | None, optional): Voice client. Defaults to None.
-            menu_message (discord.Message | None, optional): Menu message to update. Defaults to None.
             button_callback (bool, optional): Should be True if the function is being called from button callback. Defaults to False.
 
         Returns:
@@ -444,7 +440,6 @@ class VoiceExtension(BaseBot):
             ctx,
             track,
             vc=vc,
-            menu_message=menu_message,
             button_callback=button_callback
         )
 
@@ -501,7 +496,6 @@ class VoiceExtension(BaseBot):
         vc: discord.VoiceClient | None = None,
         *,
         after: bool = False,
-        menu_message: discord.Message | None = None,
         button_callback: bool = False
     ) -> str | None:
         """Switch to the next track in the queue. Return track title on success.
@@ -524,9 +518,12 @@ class VoiceExtension(BaseBot):
             logging.warning("[VC_EXT] Guild ID or User ID not found in context inside 'next_track'")
             return None
 
-        guild = await self.db.get_guild(ctx.guild_id, projection={'shuffle': 1, 'repeat': 1, 'is_stopped': 1, 'current_menu': 1, 'vibing': 1, 'current_track': 1})
+        guild = await self.db.get_guild(ctx.guild_id, projection={
+            'shuffle': 1, 'repeat': 1, 'is_stopped': 1,
+            'current_menu': 1, 'vibing': 1, 'current_track': 1
+        })
 
-        if guild['is_stopped'] and after:
+        if after and guild['is_stopped']:
             logging.debug("[VC_EXT] Playback is stopped, skipping after callback.")
             return None
 
@@ -534,8 +531,9 @@ class VoiceExtension(BaseBot):
             logging.debug("[VC_EXT] Adding current track to history")
             await self.db.modify_track(ctx.guild_id, guild['current_track'], 'previous', 'insert')
 
-        if after and not await self.update_menu_view(ctx, menu_message=menu_message, disable=True):
-            await self.respond(ctx, "error", "Не удалось обновить меню.", ephemeral=True, delete_after=15)
+        if after and guild['current_menu']:
+            if not await self.update_menu_view(ctx, button_callback=button_callback, disable=True):
+                await self.respond(ctx, "error", "Не удалось обновить меню.", ephemeral=True, delete_after=15)
 
         if guild['vibing'] and guild['current_track']:
             await self.send_vibe_feedback(ctx, 'trackFinished' if after else 'skip', guild['current_track'])
@@ -570,6 +568,9 @@ class VoiceExtension(BaseBot):
         logging.info("[VC_EXT] No next track found")
         if after:
             await self.db.update(ctx.guild_id, {'is_stopped': True, 'current_track': None})
+            
+            if guild['current_menu']:
+                await self.update_menu_view(ctx, button_callback=button_callback)
 
         return None
 
@@ -854,7 +855,6 @@ class VoiceExtension(BaseBot):
         track: Track,
         *,
         vc: discord.VoiceClient | None = None,
-        menu_message: discord.Message | None = None,
         button_callback: bool = False,
         retry: bool = False
     ) -> str | None:
@@ -865,7 +865,6 @@ class VoiceExtension(BaseBot):
             ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context.
             track (Track): Track to play.
             vc (discord.VoiceClient | None): Voice client.
-            menu_message (discord.Message | None): Menu message. If None, fetches menu from channel using message id from database. Defaults to None.
             button_callback (bool): Should be True if the function is being called from button callback. Defaults to False.
             retry (bool): Whether the function is called again.
 
@@ -887,7 +886,7 @@ class VoiceExtension(BaseBot):
                 await self._download_track(ctx.guild_id, track)
         except yandex_music.exceptions.TimedOutError:
             if not retry:
-                return await self._play_track(ctx, track, vc=vc, menu_message=menu_message, button_callback=button_callback, retry=True)
+                return await self._play_track(ctx, track, vc=vc, button_callback=button_callback, retry=True)
 
             await self.respond(ctx, "error", "Не удалось загрузить трек. Попробуйте сбросить меню.", delete_after=15)
             logging.error(f"[VC_EXT] Failed to download track '{track.title}'")
@@ -904,9 +903,8 @@ class VoiceExtension(BaseBot):
 
         await self.db.set_current_track(ctx.guild_id, track)
 
-        if menu_message or guild['current_menu']:
-            # Updating menu message before playing to prevent delay and avoid FFMPEG lags.
-            await self.update_menu_embed_and_view(ctx, menu_message=menu_message, button_callback=button_callback)
+        if guild['current_menu']:
+            await self.update_menu_embed_and_view(ctx, button_callback=button_callback)
 
         if not guild['vibing']:
             # Giving FFMPEG enough time to process the audio file

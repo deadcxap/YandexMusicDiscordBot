@@ -6,14 +6,13 @@ import yandex_music.exceptions
 from yandex_music import ClientAsync as YMClient
 
 import discord
-from discord.ui import View
 from discord import Interaction, ApplicationContext, RawReactionActionEvent, MISSING
 
 from MusicBot.database import VoiceGuildsDatabase, BaseUsersDatabase
 
 class BaseBot:
-    
-    menu_views: dict[int, View] = {}  # Store menu views and delete them when needed to prevent memory leaks for after callbacks.
+
+    menu_views: dict[int, Any] = {}  # Store menu views and delete them when needed to prevent memory leaks for after callbacks.
     _ym_clients: dict[str, YMClient] = {}  # Store YM clients to prevent creating new ones for each command.
     
     def __init__(self, bot: discord.Bot | None) -> None:
@@ -106,10 +105,10 @@ class BaseBot:
         if not embed and response_type:
             if content:
                 kwargs['description'] = content
-            embed = self.generate_response_embed(response_type, **kwargs)
+            embed = self.generate_response_embed(ctx, response_type, **kwargs)
             content = None
         
-        if not isinstance(ctx, RawReactionActionEvent) and ctx.response.is_done():
+        if not isinstance(ctx, RawReactionActionEvent) and not view and ctx.response.is_done():
             view = MISSING
         
         if not isinstance(ctx, RawReactionActionEvent):
@@ -176,41 +175,37 @@ class BaseBot:
             return guild['current_viber_id']
 
         return ctx.user_id if isinstance(ctx, discord.RawReactionActionEvent) else ctx.user.id if ctx.user else None
-
-    async def update_menu_views_dict(
-        self,
-        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
-        *,
-        disable: bool = False
-    ) -> None:
-        """Genereate a new menu view and update the `menu_views` dict. This prevents creating multiple menu views for the same guild.
-        Use guild id as a key to access menu view.
-
-        Args:
-            ctx (ApplicationContext | Interaction | RawReactionActionEvent): Context
-            guild (ExplicitGuild): Guild.
-            disable (bool, optional): Disable menu. Defaults to False.
-        """
-        logging.debug(f"[BASE_BOT] Updating menu views dict for guild {ctx.guild_id}")
+    
+    async def init_menu_view(self, ctx: ApplicationContext | Interaction | RawReactionActionEvent, gid: int, *, disable: bool = False) -> None:
         from MusicBot.ui import MenuView
-        
-        if not ctx.guild_id:
-            logging.warning("[BASE_BOT] Guild not found")
-            return
-
-        if ctx.guild_id in self.menu_views:
-            self.menu_views[ctx.guild_id].stop()
-        
-        self.menu_views[ctx.guild_id] = await MenuView(ctx).init(disable=disable)
+        self.menu_views[gid] = await MenuView(ctx).init(disable=disable)
     
     def generate_response_embed(
         self,
+        ctx: ApplicationContext | Interaction | RawReactionActionEvent,
         embed_type: Literal['info', 'success', 'error'] = 'info',
         **kwargs: Any
     ) -> discord.Embed:
         
+        if isinstance(ctx, Interaction):
+            name = ctx.client.user.name if ctx.client.user else None
+            icon_url = ctx.client.user.avatar.url if ctx.client.user and ctx.client.user.avatar else None
+        elif isinstance(ctx, ApplicationContext):
+            name = ctx.bot.user.name if ctx.bot.user else None
+            icon_url = ctx.bot.user.avatar.url if ctx.bot.user and ctx.bot.user.avatar else None
+        elif self.bot:
+            name = self.bot.user.name if self.bot.user else None
+            icon_url = self.bot.user.avatar.url if self.bot.user and self.bot.user.avatar else None
+        else:
+            name = icon_url = None
+            
+        if not name:
+            name = 'YandexMusic'
+        if not icon_url:
+            icon_url="https://github.com/Lemon4ksan/YandexMusicDiscordBot/blob/main/assets/Logo.png?raw=true"
+
         embed = discord.Embed(**kwargs)
-        embed.set_author(name='YandexMusic', icon_url="https://github.com/Lemon4ksan/YandexMusicDiscordBot/blob/main/assets/Logo.png?raw=true")
+        embed.set_author(name=name, icon_url=icon_url)
 
         if embed_type == 'info':
             embed.color = 0xfed42b

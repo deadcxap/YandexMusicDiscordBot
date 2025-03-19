@@ -13,13 +13,14 @@ from yandex_music import TrackLyrics, Playlist, ClientAsync as YMClient
 from MusicBot.cogs.utils import VoiceExtension
 
 class ToggleButton(Button, VoiceExtension):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, root: 'MenuView', *args, **kwargs):
         super().__init__(*args, **kwargs)
         VoiceExtension.__init__(self, None)
+        self.root = root
     
     async def callback(self, interaction: Interaction) -> None:
-        callback_type = interaction.custom_id
-        if callback_type not in ('repeat', 'shuffle'):
+
+        if (callback_type := interaction.custom_id) not in ('repeat', 'shuffle'):
             raise ValueError(f"Invalid callback type: '{callback_type}'")
         
         logging.info(f'[MENU] {callback_type.capitalize()} button callback')
@@ -62,8 +63,10 @@ class ToggleButton(Button, VoiceExtension):
         
         await self.db.update(gid, {callback_type: not guild[callback_type]})
 
-        if not await self.update_menu_view(interaction, button_callback=True):
-            await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте снова.", delete_after=15, ephemeral=True)
+        button = self.root.repeat_button if callback_type == 'repeat' else self.root.shuffle_button
+        button.style = ButtonStyle.secondary if guild[callback_type] else ButtonStyle.success
+
+        await interaction.edit(view=await self.root.update())
 
 class PlayPauseButton(Button, VoiceExtension):
     def __init__(self, **kwargs):
@@ -109,6 +112,11 @@ class PlayPauseButton(Button, VoiceExtension):
             )
             return
         
+        if vc.is_paused():
+            vc.resume()
+        else:
+            vc.pause()
+
         try:
             embed = interaction.message.embeds[0]
         except IndexError:
@@ -116,16 +124,19 @@ class PlayPauseButton(Button, VoiceExtension):
             return
 
         guild = await self.db.get_guild(interaction.guild_id, projection={'single_token_uid': 1})
-        
-        if vc.is_paused():
-            vc.resume()
-            if guild['single_token_uid'] and (user := await self.get_discord_user_by_id(interaction, guild['single_token_uid'])):
+    
+        if not vc.is_paused() and guild['single_token_uid']:
+            user = await self.get_discord_user_by_id(interaction, guild['single_token_uid'])
+
+            if guild['single_token_uid'] and user:
                 embed.set_footer(text=f"Используется токен {user.display_name}", icon_url=user.display_avatar.url)
             else:
-                embed.remove_footer()
-        else:
-            vc.pause()
+                embed.set_footer(text='Используется токен (неизвестный пользователь)')
+
+        elif vc.is_paused():
             embed.set_footer(text='Приостановлено')
+        else:
+            embed.remove_footer()
 
         await interaction.edit(embed=embed)
 
@@ -135,8 +146,8 @@ class SwitchTrackButton(Button, VoiceExtension):
         VoiceExtension.__init__(self, None)
     
     async def callback(self, interaction: Interaction) -> None:
-        callback_type = interaction.custom_id
-        if callback_type not in ('next', 'previous'):
+
+        if (callback_type := interaction.custom_id) not in ('next', 'previous'):
             raise ValueError(f"Invalid callback type: '{callback_type}'")
 
         if not (gid := interaction.guild_id) or not interaction.user:
@@ -191,9 +202,10 @@ class SwitchTrackButton(Button, VoiceExtension):
             await self.respond(interaction, "error", "Что-то пошло не так. Попробуйте позже.", delete_after=15, ephemeral=True)
 
 class ReactionButton(Button, VoiceExtension):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, root: 'MenuView', *args, **kwargs):
         super().__init__(*args, **kwargs)
         VoiceExtension.__init__(self, None)
+        self.root = root
     
     async def callback(self, interaction: Interaction):
         callback_type = interaction.custom_id
@@ -212,30 +224,28 @@ class ReactionButton(Button, VoiceExtension):
         res = await self.react_track(interaction, callback_type)
 
         if callback_type == 'like' and res[0]:
-            await self.update_menu_views_dict(interaction)
-            await interaction.edit(view=self.menu_views[gid])
-            await self.respond(
-                interaction, "success",
-                f"Трек был {'добавлен в понравившиеся.' if res[1] == 'added' else 'удалён из понравившихся.'}",
-                delete_after=15, ephemeral=True
-            )
+            button = self.root.like_button
+            response_message = f"Трек был {'добавлен в понравившиеся.' if res[1] == 'added' else 'удалён из понравившихся.'}"
 
         elif callback_type == 'dislike' and res[0]:
 
-            if len(channel.members) == 2 and not await self.play_next_track(interaction, vc=vc, button_callback=True):
-                await self.respond(interaction, "info", "Воспроизведение приостановлено. Нет треков в очереди.", delete_after=15)
+            if len(channel.members) == 2:
+                await self.play_next_track(interaction, vc=vc, button_callback=True)
+                return
 
-            await self.update_menu_views_dict(interaction)
-            await interaction.edit(view=self.menu_views[gid])
-            await self.respond(
-                interaction, "success",
-                f"Трек был {'добавлен в дизлайки.' if res[1] == 'added' else 'удалён из дизлайков.'}",
-                delete_after=15, ephemeral=True
-            )
+            button = self.root.dislike_button
+            response_message =f"Трек был {'добавлен в дизлайки.' if res[1] == 'added' else 'удалён из дизлайков.'}"
 
         else:
             logging.debug(f"[VC_EXT] Failed to get {callback_type} tracks")
             await self.respond(interaction, "error", "Операция не удалась. Попробуйте позже.", delete_after=15, ephemeral=True)
+            return
+
+        if len(channel.members) == 2:
+            button.style = ButtonStyle.success if res[1] == 'added' else ButtonStyle.secondary
+            await interaction.edit(view=await self.root.update())
+        else:
+            await self.respond(interaction, "success", response_message, delete_after=15, ephemeral=True)
     
     async def react_track(
         self,
@@ -586,8 +596,7 @@ class AddToPlaylistButton(Button, VoiceExtension):
         if not await self.voice_check(interaction) or not interaction.guild_id:
             return
 
-        current_track = await self.db.get_track(interaction.guild_id, 'current')
-        if not current_track:
+        if not await self.db.get_track(interaction.guild_id, 'current'):
             await self.respond(interaction, "error", "Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             return
 
@@ -599,8 +608,7 @@ class AddToPlaylistButton(Button, VoiceExtension):
             await self.respond(interaction, "error", "Нет воспроизводимого трека.", delete_after=15, ephemeral=True)
             return
 
-        playlists = await client.users_playlists_list()
-        if not playlists:
+        if not (playlists := await client.users_playlists_list()):
             await self.respond(interaction, "error", "У вас нет плейлистов.", delete_after=15, ephemeral=True)
             return
 
@@ -628,39 +636,58 @@ class MenuView(View, VoiceExtension):
         VoiceExtension.__init__(self, None)
         self.ctx = ctx
 
-        self.repeat_button = ToggleButton(style=ButtonStyle.secondary, emoji='🔂', row=0, custom_id='repeat')
-        self.shuffle_button = ToggleButton(style=ButtonStyle.secondary, emoji='🔀', row=0, custom_id='shuffle')
+        self.repeat_button = ToggleButton(self, style=ButtonStyle.secondary, emoji='🔂', row=0, custom_id='repeat')
+        self.shuffle_button = ToggleButton(self, style=ButtonStyle.secondary, emoji='🔀', row=0, custom_id='shuffle')
         self.play_pause_button = PlayPauseButton(style=ButtonStyle.primary, emoji='⏯', row=0)
         self.next_button = SwitchTrackButton(style=ButtonStyle.primary, emoji='⏭', row=0, custom_id='next')
         self.prev_button = SwitchTrackButton(style=ButtonStyle.primary, emoji='⏮', row=0, custom_id='previous')
 
-        self.like_button = ReactionButton(style=ButtonStyle.secondary, emoji='❤️', row=1, custom_id='like')
-        self.dislike_button = ReactionButton(style=ButtonStyle.secondary, emoji='💔', row=1, custom_id='dislike')
+        self.like_button = ReactionButton(self, style=ButtonStyle.secondary, emoji='❤️', row=1, custom_id='like')
+        self.dislike_button = ReactionButton(self, style=ButtonStyle.secondary, emoji='💔', row=1, custom_id='dislike')
         self.lyrics_button = LyricsButton(style=ButtonStyle.secondary, emoji='📋', row=1)
         self.add_to_playlist_button = AddToPlaylistButton(style=ButtonStyle.secondary, emoji='📁', row=1)
         self.vibe_button = MyVibeButton(style=ButtonStyle.secondary, emoji='🌊', row=1)
         self.vibe_settings_button = MyVibeSettingsButton(style=ButtonStyle.success, emoji='🛠', row=1)
+        
+        self.current_vibe_button: MyVibeButton | MyVibeSettingsButton = self.vibe_button
 
     async def init(self, *, disable: bool = False) -> Self:
-        if not self.ctx.guild_id:
-            return self
-
-        self.guild = await self.db.get_guild(self.ctx.guild_id, projection={
-            'repeat': 1, 'shuffle': 1, 'current_track': 1, 'current_menu': 1, 'vibing': 1, 'single_token_uid': 1
-        })
-
-        if self.guild['repeat']:
-            self.repeat_button.style = ButtonStyle.success
-        if self.guild['shuffle']:
-            self.shuffle_button.style = ButtonStyle.success
-
-        current_track = self.guild['current_track']
+        await self.update(disable=disable)
 
         self.add_item(self.repeat_button)
         self.add_item(self.prev_button)
         self.add_item(self.play_pause_button)
         self.add_item(self.next_button)
         self.add_item(self.shuffle_button)
+        self.add_item(self.like_button)
+        self.add_item(self.dislike_button)
+        self.add_item(self.lyrics_button)
+        self.add_item(self.add_to_playlist_button)
+        self.add_item(self.current_vibe_button)
+
+        return self
+
+    async def update(self, *, disable: bool = False) -> Self:
+        if not self.ctx.guild_id:
+            return self
+        
+        self.enable_all_items()
+
+        self.guild = await self.db.get_guild(self.ctx.guild_id, projection={
+            'repeat': 1, 'shuffle': 1, 'current_track': 1, 'current_viber_id': 1, 'vibing': 1, 'single_token_uid': 1
+        })
+
+        if self.guild['repeat']:
+            self.repeat_button.style = ButtonStyle.success
+        else:
+            self.repeat_button.style = ButtonStyle.secondary
+
+        if self.guild['shuffle']:
+            self.shuffle_button.style = ButtonStyle.success
+        else:
+            self.shuffle_button.style = ButtonStyle.secondary
+
+        current_track = self.guild['current_track']
 
         if not isinstance(self.ctx, RawReactionActionEvent) \
            and len(cast(VoiceChannel, self.ctx.channel).members) == 2 \
@@ -668,9 +695,17 @@ class MenuView(View, VoiceExtension):
 
             if current_track and str(current_track['id']) in [str(like.id) for like in await self.get_reacted_tracks(self.ctx, 'like')]:
                 self.like_button.style = ButtonStyle.success
+            else:
+                self.like_button.style = ButtonStyle.secondary
 
             if current_track and str(current_track['id']) in [str(dislike.id) for dislike in await self.get_reacted_tracks(self.ctx, 'dislike')]:
                 self.dislike_button.style = ButtonStyle.success
+            else:
+                self.dislike_button.style = ButtonStyle.secondary
+
+        else:
+            self.like_button.style = ButtonStyle.secondary
+            self.dislike_button.style = ButtonStyle.secondary
 
         if not current_track:
             self.lyrics_button.disabled = True
@@ -679,32 +714,27 @@ class MenuView(View, VoiceExtension):
             self.add_to_playlist_button.disabled = True
         elif not current_track['lyrics_available']:
             self.lyrics_button.disabled = True
-        
+
         if self.guild['single_token_uid']:
             self.like_button.disabled = True
             self.dislike_button.disabled = True
             self.add_to_playlist_button.disabled = True
 
-        self.add_item(self.like_button)
-        self.add_item(self.dislike_button)
-        self.add_item(self.lyrics_button)
-        self.add_item(self.add_to_playlist_button)
-
         if self.guild['vibing']:
-            self.add_item(self.vibe_settings_button)
+            self.current_vibe_button = self.vibe_settings_button
         else:
-            self.add_item(self.vibe_button)
+            self.current_vibe_button = self.vibe_button
 
         if disable:
             self.disable_all_items()
 
         return self
-
+    
     async def on_timeout(self) -> None:
         logging.debug('[MENU] Menu timed out. Deleting menu message')
         if not self.ctx.guild_id:
             return
-        
+
         if self.guild['current_menu']:
             await self.db.update(self.ctx.guild_id, {
                 'current_menu': None, 'repeat': False, 'shuffle': False,
@@ -718,4 +748,4 @@ class MenuView(View, VoiceExtension):
             else:
                 logging.debug('[MENU] No menu message found')
 
-            self.stop()
+        self.stop()
