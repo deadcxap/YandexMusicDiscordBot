@@ -230,6 +230,15 @@ class Voice(Cog, VoiceExtension):
         member = cast(discord.Member, ctx.author)
         guild = await self.db.get_guild(ctx.guild_id, projection={'allow_change_connect': 1, 'use_single_token': 1})
 
+        if guild['use_single_token'] and not await self.users_db.get_ym_token(ctx.author.id):
+            await self.respond(
+                ctx, "error",
+                "У вас нет токена Яндекс Музыки. Используйте команду /account login для установки токена, " \
+                "попросите участника с токеном запустить бота или отключите использование общего токена в настройках сервера.",
+                delete_after=15, ephemeral=True 
+            )
+            return
+        
         await ctx.defer(ephemeral=True)
 
         if not member.guild_permissions.manage_channels and not guild['allow_change_connect']:
@@ -247,7 +256,8 @@ class Voice(Cog, VoiceExtension):
             else:
                 response_message = ("success", "Подключение успешно!")
 
-                if guild['use_single_token'] and await self.users_db.get_ym_token(ctx.author.id):
+                if guild['use_single_token']:
+                    response_message = ("success", "Подключение успешно! Ваш токен будет использован для всех операций с музыкой на этом сервере.")
                     await self.db.update(ctx.guild_id, {'single_token_uid': ctx.author.id})
         else:
             response_message = ("error", "Вы должны отправить команду в чате голосового канала.")
@@ -434,6 +444,8 @@ class Voice(Cog, VoiceExtension):
 
         member = cast(discord.Member, ctx.author)
         channel = cast(discord.VoiceChannel, ctx.channel)
+        
+        await self.users_db.reset_vibe_settings(ctx.user.id)
 
         if len(channel.members) > 2 and not member.guild_permissions.manage_channels:
             logging.info(f"Starting vote for starting vibe in guild {ctx.guild_id}")
