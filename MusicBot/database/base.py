@@ -20,9 +20,6 @@ guilds: AsyncCollection[ExplicitGuild] = db.guilds
 class BaseUsersDatabase:
     DEFAULT_USER = User(
         ym_token=None,
-        playlists=[],
-        playlists_page=0,
-        queue_page=0,
         vibe_batch_id=None,
         vibe_type=None,
         vibe_id=None,
@@ -69,6 +66,16 @@ class BaseUsersDatabase:
             projection={'ym_token': 1}
         )
         return cast(str | None, user.get('ym_token') if user else None)
+
+    async def reset_vibe_settings(self, uid: int) -> None:
+        await users.update_one(
+            {'_id': uid},
+            {'$set': {'vibe_settings': {
+                'mood': 'all',
+                'diversity': 'default',
+                'lang': 'any'
+            }}}
+        )
 
 
 class BaseGuildsDatabase:
