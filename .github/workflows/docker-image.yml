@@ -30,6 +30,14 @@ jobs:
         id: vars
         run: echo "short_sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
+      - name: Sanitize branch name
+        id: sanitize
+        run: |
+          sanitized=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
+          echo "sanitized=${sanitized}" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
       # Сборка для push-событий (ветки)
       - name: Build and push Docker image (push event)
         if: github.event_name != 'pull_request'
@@ -37,7 +45,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }}
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.sanitize.outputs.sanitized }}-${{ steps.vars.outputs.short_sha }}
 
       # Сборка для pull request
       - name: Build and push Docker image (pull request)
@@ -54,13 +62,13 @@ jobs:
       - name: Set the latest tag for the main branch
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          docker pull $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }}
-          docker tag $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest
+          docker pull $IMAGE_NAME:${{ steps.sanitize.outputs.sanitized }}-${{ steps.vars.outputs.short_sha }}
+          docker tag $IMAGE_NAME:${{ steps.sanitize.outputs.sanitized }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest
           docker push $IMAGE_NAME:latest
           
       - name: Set the latest tag for the dev branch
         if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
         run: |
-          docker pull $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }}
-          docker tag $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest-dev
+          docker pull $IMAGE_NAME:${{ steps.sanitize.outputs.sanitized }}-${{ steps.vars.outputs.short_sha }}
+          docker tag $IMAGE_NAME:${{ steps.sanitize.outputs.sanitized }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest-dev
           docker push $IMAGE_NAME:latest-dev
