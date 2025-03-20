@@ -30,23 +30,37 @@ jobs:
         id: vars
         run: echo "short_sha=${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image
+      # Сборка для push-событий (ветки)
+      - name: Build and push Docker image (push event)
+        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ github.ref_name }}-${{ steps.vars.outputs.short_sha }}
+          tags: ${{ env.IMAGE_NAME }}:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }}
 
+      # Сборка для pull request
+      - name: Build and push Docker image (pull request)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:pr-${{ github.event.number }}
+            ${{ env.IMAGE_NAME }}:latest-pr
+
+      # Переопределение тега latest для основных веток (только для push-событий)
       - name: Set the latest tag for the main branch
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          docker pull $IMAGE_NAME:${{ github.ref_name }}-${{ steps.vars.outputs.short_sha }}
-          docker tag $IMAGE_NAME:${{ github.ref_name }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest
+          docker pull $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }}
+          docker tag $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest
           docker push $IMAGE_NAME:latest
           
       - name: Set the latest tag for the dev branch
-        if: github.ref == 'refs/heads/dev'
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
         run: |
-          docker pull $IMAGE_NAME:${{ github.ref_name }}-${{ steps.vars.outputs.short_sha }}
-          docker tag $IMAGE_NAME:${{ github.ref_name }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest-dev
+          docker pull $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }}
+          docker tag $IMAGE_NAME:${{ replace(github.ref_name, '/', '-') }}-${{ steps.vars.outputs.short_sha }} $IMAGE_NAME:latest-dev
           docker push $IMAGE_NAME:latest-dev
