@@ -2,7 +2,7 @@ from math import ceil
 from typing import Any
 
 from discord.ui import View, Button, Item
-from discord import ApplicationContext, ButtonStyle, Interaction, Embed
+from discord import ApplicationContext, ButtonStyle, Interaction, Embed, HTTPException
 
 from MusicBot.cogs.utils.voice_extension import VoiceExtension
 
@@ -88,4 +88,8 @@ class QueueView(View, VoiceExtension):
             self.prev_button.disabled = True
     
     async def on_timeout(self) -> None:
+        try:
+            await super().on_timeout()
+        except HTTPException:
+            pass
         self.stop()

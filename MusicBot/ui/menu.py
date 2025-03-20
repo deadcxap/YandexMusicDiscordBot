@@ -1,4 +1,5 @@
 import logging
+from time import monotonic
 from typing import Self, Literal, cast
 
 from discord.ui import View, Button, Item, Select
@@ -727,6 +728,9 @@ class MenuView(View, VoiceExtension):
 
         if disable:
             self.disable_all_items()
+        
+        if self.timeout:
+            self.__timeout_expiry = monotonic() + self.timeout
 
         return self
     
